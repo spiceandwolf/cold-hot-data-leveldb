@@ -31,7 +31,7 @@ namespace leveldb
         //Iterator已有的功能不需要变化
 
         //将数据插入2q队列
-        void Insert_Twoqueue(const Twoqueue_Node*& node, const bool& is_new);
+        void Insert_Twoqueue(const Twoqueue_Node*& node, const Twoqueue_Node*& sameButOldest, const bool& is_new);
 
         int RandomHeight();
         bool Equal(const Key& a, const Key& b) const { return (compare_(a, b) == 0); }
@@ -50,6 +50,8 @@ namespace leveldb
         Twoqueue_Node* FindGreaterOrEqual(const Key& key, Twoqueue_Node** prev) const;
         Twoqueue_Node* FindLessThan(const Key& key) const;
         Twoqueue_Node* FindLast() const;
+        //找到同一关键字最早的节点，若找不到则返回当前一节点
+        Twoqueue_Node* FindNoSmaller(const Twoqueue_Node*& node) const;
 
         Comparator const compare_;//同skiplist
         Arena* const arena_;//同skiplist
@@ -85,14 +87,21 @@ namespace leveldb
             return follow_.load(std::memory_order_acquire);
         }
 
+        Twoqueue_Node* New() {
+            return new_.load(std::memory_order_acquire);
+        }
+
         void SetNext(int n, Twoqueue_Node* x) {
             assert(n >= 0);
             next_[n].store(x, std::memory_order_release);
         }
 
-        void SetFollow(std::Twoqueue_Node* x) {
-            assert(n >= 0);
+        void SetFollow(Twoqueue_Node* x) {
             follow_.store(x, std::memory_order_release);
+        }
+
+        void SetNew(Twoqueue_Node* x) {
+            new_.store(x, std::memory_order_release)
         }
 
         //在某些线程安全的情况下使用
@@ -105,6 +114,10 @@ namespace leveldb
             return follow_.load(std::memory_order_relaxed);
         }
 
+        Twoqueue_Node* NoBarrier_New() {
+            return new_.load(std::memory_order_relaxed);
+        }
+
         void NoBarrier_SetNext(int n, Twoqueue_Node* x) {
             assert(n >= 0);
             next_[n].store(x, std::memory_order_relaxed);
@@ -112,6 +125,10 @@ namespace leveldb
 
         void NoBarrier_SetFollow(Twoqueue_Node* x) {
             follow_.store(x, std::memory_order_relaxed);
+        }
+
+        void NoBarrier_SetNew(Twoqueue_Node* x) {
+            new_.store(x, std::memory_order_relaxed);
         }
 
         private:
@@ -211,6 +228,25 @@ namespace leveldb
     }
 
     template <typename Key, class Comparator>
+    typename Twoqueue_SkipList<Key, Comparator>::Twoqueue_Node*
+    Twoqueue_SkipList<Key, Comparator>::FindNoSmaller(const Twoqueue_Node*& node) const {
+        Twoqueue_Node* x = node;
+        int level = GetMaxHeight() - 1;
+        while (true) {
+            Twoqueue_Node* next = x->Next(level);
+            if ((next != nullptr) && (icmp_->Compare(ExtractUserKey(x->key), ExtractUserKey(next->key)) == 0)) {
+                x = next;
+            } else {
+                if (level == 0) {
+                    return x;
+                } else {
+                    level--;
+                }
+            }
+        }
+    }
+
+    template <typename Key, class Comparator>
     Twoqueue_SkipList<Key, Comparator>::Twoqueue_SkipList(Comparator cmp, Arena* arena)
     : SkipList(cmp, arena), 
     compare_(cmp),
@@ -231,17 +267,20 @@ namespace leveldb
     
     template <typename Key, class Comparator>
     void Twoqueue_SkipList<Key, Comparator>::Insert(const Key& key) {
-        Twoqueue_Node* prev[kMaxHeight];
-        Twoqueue_Node* x = FindGreaterOrEqual(key, prev);
-
+        Twoqueue_Node* prev[kMaxHeight];//存储要插入skiplist的节点的相邻的前一个节点
+        Twoqueue_Node* x = FindGreaterOrEqual(key, prev);//存储要插入skiplist的节点的相邻的后一个节点
+        Twoqueue_Node* sameButOldest = nullptr;//存储要插入skiplist的节点有相同关键字的第一个节点
         bool is_new = false;
 
-        //将节点插入2q链表中,比较新插入的节点的userkey和与它紧邻的前一userkey,
+        //将节点插入2q链表中,比较新插入的节点的userkey和与它紧邻的后一userkey,
         //如果相同则是该userkey的新值，否则是有新关键字的节点
-        int r = icmp_->Compare(ExtractUserKey(key), ExtractUserKey(x->key));
+        int r = icmp_->Compare(ExtractUserKey(x->key), ExtractUserKey(key));
         if (r == 0) {
+            sameButOldest = FindNoSmaller(x);
             is_new = true;
         }
+
+        //对于相同的 user-key，最新的更新（SequnceNumber 更大）排在前面 
 
         assert(x == nullptr || !Equal(key, x->key));
 
@@ -262,22 +301,26 @@ namespace leveldb
         }
         
         //插入2q链表
-        Insert_Twoqueue(x, is_new);
+        Insert_Twoqueue(x, sameButOldest, is_new);
+        cur_node_ = x;
     }
 
     //根据is_new判断插入new_还是follow_
     //is_new为true，说明是相同的userkey,
-        //则将该节点添加到前一节点的new_指针上，cur_node_所指节点的follow_指针指向该userkry的第一个节点
+        //则将该节点添加到后一节点的new_指针上，cur_node_所指节点的follow_指针指向该userkry的第一个节点
     //is_new为false，说明是不同的userkey,
         //则将该节点添加到cur_node_所指节点的follow_指针上
     template <typename Key, class Comparator>
-    void Twoqueue_SkipList<Key, Comparator>::Insert_Twoqueue(const Twoqueue_Node*& node, const bool& is_new) {
+    void Twoqueue_SkipList<Key, Comparator>::Insert_Twoqueue(
+        const Twoqueue_Node*& node, const Twoqueue_Node*& sameButOldest, const bool& is_new) {
         
         if (is_new) {
-            cur_node_->Set
+            node->Next()->SetNew(node)
+            cur_node_->SetFollow(sameButOldest);
+            
         } else {
             cur_node_->SetFollow(node);
-            cur_node_ = node;
+            
         }
 
     }
