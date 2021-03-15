@@ -31,7 +31,7 @@ namespace leveldb
         //Iterator已有的功能不需要变化
 
         //将数据插入2q队列
-        void Insert_Twoqueue(const Twoqueue_Node*& node, const bool& is_same);
+        void Insert_Twoqueue(const Twoqueue_Node*& node, const bool& is_new);
 
         int RandomHeight();
         bool Equal(const Key& a, const Key& b) const { return (compare_(a, b) == 0); }
@@ -71,7 +71,7 @@ namespace leveldb
     template <typename Key, class Comparator>
     struct Twoqueue_SkipList<Key, Comparator>::Twoqueue_Node {
         /* data */
-        explicit Twoqueue_Node(const Key& k) : key(k) {}
+        explicit Twoqueue_Node(const Key& k) : key(k), follow_(nullptr), new_(nullptr) {}
 
         Key const key;
 
@@ -234,11 +234,14 @@ namespace leveldb
         Twoqueue_Node* prev[kMaxHeight];
         Twoqueue_Node* x = FindGreaterOrEqual(key, prev);
 
-        bool is_same = true;
+        bool is_new = false;
 
         //将节点插入2q链表中,比较新插入的节点的userkey和与它紧邻的前一userkey,
-        //如果是相同的userkey,则将该节点添加到前一节点的new_指针上，
-        //否则添加到follow_指针上
+        //如果相同则是该userkey的新值，否则是有新关键字的节点
+        int r = icmp_->Compare(ExtractUserKey(key), ExtractUserKey(x->key));
+        if (r == 0) {
+            is_new = true;
+        }
 
         assert(x == nullptr || !Equal(key, x->key));
 
@@ -259,16 +262,24 @@ namespace leveldb
         }
         
         //插入2q链表
-        Insert_Twoqueue(x, is_same);
+        Insert_Twoqueue(x, is_new);
     }
 
-    //根据is_same判断插入new_还是follow_
+    //根据is_new判断插入new_还是follow_
+    //is_new为true，说明是相同的userkey,
+        //则将该节点添加到前一节点的new_指针上，cur_node_所指节点的follow_指针指向该userkry的第一个节点
+    //is_new为false，说明是不同的userkey,
+        //则将该节点添加到cur_node_所指节点的follow_指针上
     template <typename Key, class Comparator>
-    void Twoqueue_SkipList<Key, Comparator>::Insert_Twoqueue(const Twoqueue_Node*& node, const bool& is_same) {
+    void Twoqueue_SkipList<Key, Comparator>::Insert_Twoqueue(const Twoqueue_Node*& node, const bool& is_new) {
         
-        cur_node_->SetFollow(node);
-        cur_node_ = node;
-        
+        if (is_new) {
+            cur_node_->Set
+        } else {
+            cur_node_->SetFollow(node);
+            cur_node_ = node;
+        }
+
     }
 
     /*
