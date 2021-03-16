@@ -190,6 +190,8 @@ target_sources(leveldb
     "util/random.h"
     "util/status.cc"
 
+    "db/2q_skiplist.h"
+
   # Only CMake 3.3+ supports PUBLIC sources in targets exported by "install".
   $<$<VERSION_GREATER:CMAKE_VERSION,3.2>:PUBLIC>
     "${LEVELDB_PUBLIC_INCLUDE_DIR}/c.h"
@@ -374,6 +376,8 @@ if(LEVELDB_BUILD_TESTS)
     leveldb_test("util/crc32c_test.cc")
     leveldb_test("util/hash_test.cc")
     leveldb_test("util/logging_test.cc")
+
+    leveldb_test("db/2q_skiplit_test.cc")
 
     # TODO(costan): This test also uses
     #               "util/env_{posix|windows}_test_helper.h"

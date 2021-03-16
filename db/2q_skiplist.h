@@ -31,7 +31,7 @@ namespace leveldb
         //Iterator已有的功能不需要变化
 
         //将数据插入2q队列
-        void Insert_Twoqueue(const Twoqueue_Node*& node, const Twoqueue_Node*& sameButOldest, const bool& is_new);
+        void Insert_Twoqueue(const Twoqueue_Node* node, const Twoqueue_Node* sameButOldest, const bool& is_new);
 
         int RandomHeight();
         bool Equal(const Key& a, const Key& b) const { return (compare_(a, b) == 0); }
@@ -51,7 +51,7 @@ namespace leveldb
         Twoqueue_Node* FindLessThan(const Key& key) const;
         Twoqueue_Node* FindLast() const;
         //找到同一关键字最早的节点，若找不到则返回当前一节点
-        Twoqueue_Node* FindNoSmaller(const Twoqueue_Node*& node) const;
+        Twoqueue_Node* FindNoSmaller(const Twoqueue_Node* node) const;
 
         Comparator const compare_;//同skiplist
         Arena* const arena_;//同skiplist
@@ -229,7 +229,7 @@ namespace leveldb
 
     template <typename Key, class Comparator>
     typename Twoqueue_SkipList<Key, Comparator>::Twoqueue_Node*
-    Twoqueue_SkipList<Key, Comparator>::FindNoSmaller(const Twoqueue_Node*& node) const {
+    Twoqueue_SkipList<Key, Comparator>::FindNoSmaller(const Twoqueue_Node* node) const {
         Twoqueue_Node* x = node;
         int level = GetMaxHeight() - 1;
         while (true) {
@@ -312,7 +312,7 @@ namespace leveldb
         //则将该节点添加到cur_node_所指节点的follow_指针上
     template <typename Key, class Comparator>
     void Twoqueue_SkipList<Key, Comparator>::Insert_Twoqueue(
-        const Twoqueue_Node*& node, const Twoqueue_Node*& sameButOldest, const bool& is_new) {
+        const Twoqueue_Node* node, const Twoqueue_Node* sameButOldest, const bool& is_new) {
         
         if (is_new) {
             node->Next()->SetNew(node)
