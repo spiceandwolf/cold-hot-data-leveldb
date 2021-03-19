@@ -6,7 +6,7 @@
 #include <cstdlib>
 
 #include "db/skiplist.h"
-// #include "db/dbformat.h"
+#include "db/dbformat.h"
 
 namespace leveldb
 {
@@ -31,7 +31,7 @@ namespace leveldb
         //Iterator已有的功能不需要变化
 
         //将数据插入2q队列
-        void Insert_Twoqueue(const Twoqueue_Node* node, const Twoqueue_Node* sameButOldest, const bool& is_new);
+        void Insert_Twoqueue(Twoqueue_Node* node, Twoqueue_Node* sameButOldest, const bool& is_new);
 
         int RandomHeight();
         bool Equal(const Key& a, const Key& b) const { return (compare_(a, b) == 0); }
@@ -51,7 +51,7 @@ namespace leveldb
         Twoqueue_Node* FindLessThan(const Key& key) const;
         Twoqueue_Node* FindLast() const;
         //找到同一关键字最早的节点，若找不到则返回当前一节点
-        Twoqueue_Node* FindNoSmaller(const Twoqueue_Node* node) const;
+        Twoqueue_Node* FindNoSmaller(Twoqueue_Node* node) const;
 
         Comparator const compare_;//同skiplist
         Arena* const arena_;//同skiplist
@@ -67,7 +67,7 @@ namespace leveldb
         std::atomic<int> max_height_;//同skiplist
         Random rnd_;//同skiplist
 
-        // InternalKeyComparator icmp_;
+        InternalKeyComparator icmp_;
     };
     
     template <typename Key, class Comparator>
@@ -229,12 +229,13 @@ namespace leveldb
 
     template <typename Key, class Comparator>
     typename Twoqueue_SkipList<Key, Comparator>::Twoqueue_Node*
-    Twoqueue_SkipList<Key, Comparator>::FindNoSmaller(const Twoqueue_Node* node) const {
+    Twoqueue_SkipList<Key, Comparator>::FindNoSmaller(Twoqueue_Node* node) const {
         Twoqueue_Node* x = node;
         int level = GetMaxHeight() - 1;
         while (true) {
             Twoqueue_Node* next = x->Next(level);
-            if ((next != nullptr) && (compare_(ExtractUserKey(x->key), ExtractUserKey(next->key)) == 0)) {
+            if ((next != nullptr) && 
+            (icmp_.Compare(leveldb::ExtractUserKey(x->key), leveldb::ExtractUserKey(next->key)) == 0)) {
                 x = next;
             } else {
                 if (level == 0) {
@@ -258,7 +259,8 @@ namespace leveldb
     cur_node_(head_),
     cur_cold_node_(nullptr),
     max_height_(1), 
-    rnd_(0xdeadbeef) {
+    rnd_(0xdeadbeef),
+    icmp_(&compare_) {
         for (int i = 0; i < kMaxHeight; i++) {
             head_->SetNext(i, nullptr);
         }
@@ -273,7 +275,7 @@ namespace leveldb
 
         //将节点插入2q链表中,比较新插入的节点的userkey和与它紧邻的后一userkey,
         //如果相同则是该userkey的新值，否则是有新关键字的节点
-        int r = compare_(ExtractUserKey(x->key), ExtractUserKey(key));
+        int r = icmp_.Compare(leveldb::ExtractUserKey(x->key), leveldb::ExtractUserKey(key));
         if (r == 0) {
             sameButOldest = FindNoSmaller(x);
             is_new = true;
@@ -311,10 +313,10 @@ namespace leveldb
         //则将该节点添加到cur_node_所指节点的follow_指针上
     template <typename Key, class Comparator>
     void Twoqueue_SkipList<Key, Comparator>::Insert_Twoqueue(
-        const Twoqueue_Node* node, const Twoqueue_Node* sameButOldest, const bool& is_new) {
+        Twoqueue_Node* node, Twoqueue_Node* sameButOldest, const bool& is_new) {
         
         if (is_new) {
-            node->Next()->SetNew(node);
+            node->Next(0)->SetNew(node);
             cur_node_->SetFollow(sameButOldest);
             
         } else {
