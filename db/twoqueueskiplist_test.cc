@@ -49,11 +49,28 @@ namespace leveldb {
     return "test comparator";
   }
 
-  static std::string IKey(const std::string& user_key, uint64_t seq,
+  std::string IKey(const std::string& user_key, uint64_t seq,
                         ValueType vt) {
-  std::string encoded;
-  AppendInternalKey(&encoded, ParsedInternalKey(user_key, seq, vt));
-  return encoded;
+    std::string rep_;
+    PutLengthPrefixedSlice(&rep_, user_key);
+
+    Slice input(rep_);
+    Slice key;
+    GetLengthPrefixedSlice(&input, &key);
+
+    size_t key_size = key.size();
+    size_t internal_key_size = key_size + 8;
+    const size_t encoded_len = VarintLength(internal_key_size) + internal_key_size;
+    Arena arena_;
+    char* buf = arena_.Allocate(encoded_len);
+    char* p = EncodeVarint32(buf, internal_key_size);
+    std::memcpy(p, key.data(), key_size);
+    p += key_size;
+    EncodeFixed64(p, (seq << 8) | vt);
+    p += 8;
+    assert(p == buf + encoded_len);
+
+    return buf;
   }
 
   TEST(TwoqueueSkipListTest, Iter) {
@@ -86,19 +103,23 @@ namespace leveldb {
     Twoqueue_SkipList<Key, TestComparator> list(cmp, &arena);
     for (int i = 0; i < N; i++) {
       std::string ikey = IKey(NumberToString((rnd.Next() % R)), i, kTypeValue);
-      char* key = const_cast<char*>(ikey.c_str());
-      if (keys.insert(key).second) {
-        list.Insert(key);
+      size_t size = ikey.size();
+      char buf[size];
+      strcpy(buf, ikey.c_str());
+      if (keys.insert(buf).second) {
+        list.Insert(buf);
       }
     }
 
     for (int i = 0; i < R; i++) {
       std::string ikey = IKey(NumberToString(i), i, kTypeValue);
-      char* key = const_cast<char*>(ikey.c_str());
-      if (list.Contains(key)) {
-        ASSERT_EQ(keys.count(key), 1);
+      size_t size = ikey.size();
+      char buf[size];
+      strcpy(buf, ikey.c_str());      
+      if (list.Contains(buf)) {
+        ASSERT_EQ(keys.count(buf), 1);
       } else {
-        ASSERT_EQ(keys.count(key), 0);
+        ASSERT_EQ(keys.count(buf), 0);
       }
     }
 
@@ -124,11 +145,14 @@ namespace leveldb {
     for (int i = 0; i < R; i++) {
       SkipList<Key, TestComparator>::Iterator iter(&list);
       std::string ikey = IKey(NumberToString(i), i, kTypeValue);
-      char* key = const_cast<char*>(ikey.c_str());
-      iter.Seek(key);
+      size_t size = ikey.size();
+      char buf[size];
+      strcpy(buf, ikey.c_str());
+    
+      iter.Seek(buf);
 
       // Compare against model iterator
-      std::set<Key>::iterator model_iter = keys.lower_bound(key);
+      std::set<Key>::iterator model_iter = keys.lower_bound(buf);
       for (int j = 0; j < 3; j++) {
         if (model_iter == keys.end()) {
           ASSERT_TRUE(!iter.Valid());

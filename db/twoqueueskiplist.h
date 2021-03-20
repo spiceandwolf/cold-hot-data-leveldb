@@ -7,6 +7,7 @@
 
 #include "db/skiplist.h"
 #include "db/dbformat.h"
+#include "db/memtable.cc"
 
 namespace leveldb
 {
@@ -234,8 +235,12 @@ namespace leveldb
         int level = GetMaxHeight() - 1;
         while (true) {
             Twoqueue_Node* next = x->Next(level);
+            const char* aptr = x->key;
+            const char* bptr = next->key;
+            Slice a = GetLengthPrefixedSlice(aptr);
+            Slice b = GetLengthPrefixedSlice(bptr);
             if ((next != nullptr) && 
-            (icmp_.Compare(leveldb::ExtractUserKey(x->key), leveldb::ExtractUserKey(next->key)) == 0)) {
+            (icmp_.Compare(leveldb::ExtractUserKey(a), leveldb::ExtractUserKey(b)) == 0)) {
                 x = next;
             } else {
                 if (level == 0) {
@@ -275,15 +280,16 @@ namespace leveldb
 
         //将节点插入2q链表中,比较新插入的节点的userkey和与它紧邻的后一userkey,
         //如果相同则是该userkey的新值，否则是有新关键字的节点
-        int r = icmp_.Compare(leveldb::ExtractUserKey(x->key), leveldb::ExtractUserKey(key));
-        if (r == 0) {
-            sameButOldest = FindNoSmaller(x);
-            is_new = true;
-        }
-
         //对于相同的 user-key，最新的更新（SequnceNumber 更大）排在前面 
-
         assert(x == nullptr || !Equal(key, x->key));
+
+        if (x != nullptr) {
+            int r = icmp_.Compare(leveldb::ExtractUserKey(x->key), leveldb::ExtractUserKey(key));
+            if (r == 0) {
+                sameButOldest = FindNoSmaller(x);
+                is_new = true;
+            }            
+        }
 
         int height = RandomHeight();
         //为新增的层初始化
