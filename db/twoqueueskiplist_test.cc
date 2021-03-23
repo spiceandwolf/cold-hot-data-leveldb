@@ -101,8 +101,8 @@ namespace leveldb {
     TestKeyComparator cmp(icmp);
     Twoqueue_SkipList<Key, TestKeyComparator> list(cmp, &arena);
 
-    for (int i = 0; i < N; i++) {
-      std::string ikey = IKey(NumberToString((i % 1000)), i, kTypeValue);;
+    for (int i = 0; i < N/4; i++) {
+      std::string ikey = IKey(NumberToString(1), i, kTypeValue);;
       if (keys.insert(ikey).second) {
         char* buf = new char[ikey.size()];
         strcpy(buf, ikey.c_str());
@@ -110,17 +110,26 @@ namespace leveldb {
       }
     }
 
-    // for (int i = 0; i < R; i++) {
-    //   std::string ikey = IKey(NumberToString((i % 1000)), i, kTypeValue);
-    //   size_t size = ikey.size();
-    //   char buf[size];
-    //   strcpy(buf, ikey.c_str());      
-    //   if (list.Contains(buf)) {
-    //     ASSERT_EQ(keys.count(ikey), 1);
-    //   } else {
-    //     ASSERT_EQ(keys.count(ikey), 0);
-    //   }
-    // }
+    for (int i = N/4; i < N/2; i++) {
+      std::string ikey = IKey(NumberToString((i % 500)), i, kTypeValue);;
+      if (keys.insert(ikey).second) {
+        char* buf = new char[ikey.size()];
+        strcpy(buf, ikey.c_str());
+        list.Insert(buf);
+      }
+    }
+
+    for (int i = 0; i < R; i++) {
+      std::string ikey = IKey(NumberToString((i % 500)), i, kTypeValue);
+      size_t size = ikey.size();
+      char buf[size];
+      strcpy(buf, ikey.c_str());      
+      if (list.Contains(buf)) {
+        ASSERT_EQ(keys.count(ikey), 1);
+      } else {
+        ASSERT_EQ(keys.count(ikey), 0);
+      }
+    }
 
     // // Simple iterator tests
     // {

@@ -287,10 +287,10 @@ namespace leveldb
 
         if (x != nullptr) {
             Slice a = GetUserKey(key);
-            Slice b = GetUserKey(x->key);
+            Slice b = GetUserKey(prev[0]->key);
             int r = compare_(a.data(), b.data());
             if (r == 0) {
-                sameButOldest = FindNoSmaller(x);
+                sameButOldest = FindNoSmaller(prev[0]);
                 is_new = true;
             }            
         }
