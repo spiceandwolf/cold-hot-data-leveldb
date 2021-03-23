@@ -1,5 +1,6 @@
 #include "db/twoqueueskiplist.h"
 #include "include/leveldb/comparator.h"
+#include "db/dbformat.h"
 
 #include <atomic>
 #include <set>
@@ -17,37 +18,31 @@ namespace leveldb {
 
   typedef char* Key;
 
-  class TestComparator : public Comparator {
-    // const Comparator* testcmp_;
+  struct TestKeyComparator {
+
+    const InternalKeyComparator comparator;
 
     public:
-    TestComparator() {}
+    explicit TestKeyComparator(const InternalKeyComparator& c) : comparator(c) {}
 
-    int operator()(const Key& a, const Key& b) const {
-      if (strcmp(a, b) < 0) {
-        return -1;
-      } else if (strcmp(a, b) > 0) {
-        return +1;
-      } else {
-        return 0;
-      }
+    int operator()(const char* aptr, const char* bptr) const {
+      Slice a = GetLengthPrefixedSlice(aptr);
+      Slice b = GetLengthPrefixedSlice(bptr);
+      return comparator.Compare(a, b);
     }
-
-    int Compare(const Slice& a, const Slice& b) const override;
-    void FindShortestSeparator(std::string* start, const Slice& limit) const override;
-    void FindShortSuccessor(std::string* key) const override;
-    const char* Name() const override;
+    
   };
 
-  int TestComparator::Compare(const Slice& a, const Slice& b) const {
-    return a.compare(b);
-  }
-
-  void TestComparator::FindShortestSeparator(std::string* start, const Slice& limit) const {}
-  void TestComparator::FindShortSuccessor(std::string* key) const {}
-  const char* TestComparator::Name() const {
-    return "test comparator";
-  }
+  class TestComparator : public Comparator {
+     const char* Name() const override {
+       return "testcomparator";
+     }
+     int Compare(const Slice& a, const Slice& b) const override {
+       return BytewiseComparator()->Compare(a, b);
+     }
+     void FindShortestSeparator(std::string* start, const Slice& limit) const override {}
+     void FindShortSuccessor(std::string* key) const override {}
+  };
 
   std::string IKey(const std::string& user_key, uint64_t seq,
                         ValueType vt) {
@@ -75,14 +70,16 @@ namespace leveldb {
 
   TEST(TwoqueueSkipListTest, Iter) {
     Arena arena;
-    TestComparator cmp;
+    TestComparator tcmp;
+    InternalKeyComparator icmp(&tcmp);
+    TestKeyComparator cmp(icmp);
 
-    Twoqueue_SkipList<Key, TestComparator> list(cmp, &arena);
+    Twoqueue_SkipList<Key, TestKeyComparator> list(cmp, &arena);
     char key[1];
     sprintf(key, "%d", 10);
     ASSERT_TRUE(!list.Contains(key));
 
-    Twoqueue_SkipList<Key, TestComparator>::Iterator iter(&list);
+    Twoqueue_SkipList<Key, TestKeyComparator>::Iterator iter(&list);
     ASSERT_TRUE(!iter.Valid());
     iter.SeekToFirst();
     ASSERT_TRUE(!iter.Valid());
@@ -99,15 +96,15 @@ namespace leveldb {
     Random rnd(1000);
     std::set<std::string> keys;
     Arena arena;
-    TestComparator cmp;
-    Twoqueue_SkipList<Key, TestComparator> list(cmp, &arena);
+    TestComparator tcmp;
+    InternalKeyComparator icmp(&tcmp);
+    TestKeyComparator cmp(icmp);
+    Twoqueue_SkipList<Key, TestKeyComparator> list(cmp, &arena);
 
     for (int i = 0; i < N; i++) {
-      std::string ikey = IKey(NumberToString((i % 1000)), i, kTypeValue);
-      size_t size = ikey.size();
-      
+      std::string ikey = IKey(NumberToString((i % 1000)), i, kTypeValue);;
       if (keys.insert(ikey).second) {
-        char buf[size];
+        char* buf = new char[ikey.size()];
         strcpy(buf, ikey.c_str());
         list.Insert(buf);
       }
@@ -125,67 +122,67 @@ namespace leveldb {
     //   }
     // }
 
-    // Simple iterator tests
-  //   {
-  //     Twoqueue_SkipList<Key, TestComparator>::Iterator iter(&list);
-  //     ASSERT_TRUE(!iter.Valid());
+    // // Simple iterator tests
+    // {
+    //   Twoqueue_SkipList<Key, TestKeyComparator>::Iterator iter(&list);
+    //   ASSERT_TRUE(!iter.Valid());
 
-  //     std::string ikey = IKey(NumberToString(0), 0, kTypeValue);
-  //     size_t size = ikey.size();
-  //     char buf[size];
-  //     strcpy(buf, ikey.c_str());
-  //     iter.Seek(buf);
-  //     ASSERT_TRUE(iter.Valid());
-  //     ASSERT_EQ(*(keys.begin()), std::string(iter.key()));
+    //   std::string ikey = IKey(NumberToString(0), 0, kTypeValue);
+    //   size_t size = ikey.size();
+    //   char buf[size];
+    //   strcpy(buf, ikey.c_str());
+    //   iter.Seek(buf);
+    //   ASSERT_TRUE(iter.Valid());
+    //   ASSERT_EQ(*(keys.begin()), std::string(iter.key()));
 
-  //     iter.SeekToFirst();
-  //     ASSERT_TRUE(iter.Valid());
-  //     ASSERT_EQ(*(keys.begin()), std::string(iter.key()));
+    //   iter.SeekToFirst();
+    //   ASSERT_TRUE(iter.Valid());
+    //   ASSERT_EQ(*(keys.begin()), std::string(iter.key()));
 
-  //     iter.SeekToLast();
-  //     ASSERT_TRUE(iter.Valid());
-  //     ASSERT_EQ(*(keys.rbegin()), std::string(iter.key()));
-  //   }
+    //   iter.SeekToLast();
+    //   ASSERT_TRUE(iter.Valid());
+    //   ASSERT_EQ(*(keys.rbegin()), std::string(iter.key()));
+    // }
 
-  //   // Forward iteration test
-  //   for (int i = 0; i < R; i++) {
-  //     SkipList<Key, TestComparator>::Iterator iter(&list);
-  //     std::string ikey = IKey(NumberToString(i % 1000), i, kTypeValue);
-  //     size_t size = ikey.size();
-  //     char buf[size];
-  //     strcpy(buf, ikey.c_str());
+    // // Forward iteration test
+    // for (int i = 0; i < R; i++) {
+    //   SkipList<Key, TestKeyComparator>::Iterator iter(&list);
+    //   std::string ikey = IKey(NumberToString(i % 1000), i, kTypeValue);
+    //   size_t size = ikey.size();
+    //   char buf[size];
+    //   strcpy(buf, ikey.c_str());
     
-  //     iter.Seek(buf);
+    //   iter.Seek(buf);
 
-  //     // Compare against model iterator
-  //     std::set<std::string>::iterator model_iter = keys.lower_bound(ikey);
-  //     for (int j = 0; j < 3; j++) {
-  //       if (model_iter == keys.end()) {
-  //         ASSERT_TRUE(!iter.Valid());
-  //         break;
-  //       } else {
-  //         ASSERT_TRUE(iter.Valid());
-  //         ASSERT_EQ(*model_iter, std::string(iter.key()));
-  //         ++model_iter;
-  //         iter.Next();
-  //       }
-  //     }
-  //   }
+    //   // Compare against model iterator
+    //   std::set<std::string>::iterator model_iter = keys.lower_bound(ikey);
+    //   for (int j = 0; j < 3; j++) {
+    //     if (model_iter == keys.end()) {
+    //       ASSERT_TRUE(!iter.Valid());
+    //       break;
+    //     } else {
+    //       ASSERT_TRUE(iter.Valid());
+    //       ASSERT_EQ(*model_iter, std::string(iter.key()));
+    //       ++model_iter;
+    //       iter.Next();
+    //     }
+    //   }
+    // }
 
-  //   // Backward iteration test
-  //   {
-  //     SkipList<Key, TestComparator>::Iterator iter(&list);
-  //     iter.SeekToLast();
+    // // Backward iteration test
+    // {
+    //   SkipList<Key, TestKeyComparator>::Iterator iter(&list);
+    //   iter.SeekToLast();
 
-  //     // Compare against model iterator
-  //     for (std::set<std::string>::reverse_iterator model_iter = keys.rbegin();
-  //         model_iter != keys.rend(); ++model_iter) {
-  //       ASSERT_TRUE(iter.Valid());
-  //       ASSERT_EQ(*model_iter, std::string(iter.key()));
-  //       iter.Prev();
-  //     }
-  //     ASSERT_TRUE(!iter.Valid());
-  //   }
+    //   // Compare against model iterator
+    //   for (std::set<std::string>::reverse_iterator model_iter = keys.rbegin();
+    //       model_iter != keys.rend(); ++model_iter) {
+    //     ASSERT_TRUE(iter.Valid());
+    //     ASSERT_EQ(*model_iter, std::string(iter.key()));
+    //     iter.Prev();
+    //   }
+    //   ASSERT_TRUE(!iter.Valid());
+    // }
   }
     
 } // namespace leveldb

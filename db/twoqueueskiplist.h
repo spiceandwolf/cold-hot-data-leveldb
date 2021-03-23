@@ -53,6 +53,8 @@ namespace leveldb
         Twoqueue_Node* FindLast() const;
         //找到同一关键字最早的节点，若找不到则返回当前一节点
         Twoqueue_Node* FindNoSmaller(Twoqueue_Node* node) const;
+        //抽取存储在每个节点key中的Userkey
+        Slice GetUserKey(const char* entry) const;
 
         Comparator const compare_;//同skiplist
         Arena* const arena_;//同skiplist
@@ -68,7 +70,7 @@ namespace leveldb
         std::atomic<int> max_height_;//同skiplist
         Random rnd_;//同skiplist
 
-        InternalKeyComparator icmp_;
+        // InternalKeyComparator icmp_;
     };
     
     template <typename Key, class Comparator>
@@ -237,10 +239,10 @@ namespace leveldb
             Twoqueue_Node* next = x->Next(level);
             const char* aptr = x->key;
             const char* bptr = next->key;
-            Slice a = GetLengthPrefixedSlice(aptr);
-            Slice b = GetLengthPrefixedSlice(bptr);
+            Slice a = GetUserKey(aptr);
+            Slice b = GetUserKey(bptr);
             if ((next != nullptr) && 
-            (icmp_.Compare(leveldb::ExtractUserKey(a), leveldb::ExtractUserKey(b)) == 0)) {
+            (compare_(a.data(), b.data()) == 0)) {
                 x = next;
             } else {
                 if (level == 0) {
@@ -264,8 +266,7 @@ namespace leveldb
     cur_node_(head_),
     cur_cold_node_(nullptr),
     max_height_(1), 
-    rnd_(0xdeadbeef),
-    icmp_(&compare_) {
+    rnd_(0xdeadbeef) {
         for (int i = 0; i < kMaxHeight; i++) {
             head_->SetNext(i, nullptr);
         }
@@ -282,9 +283,12 @@ namespace leveldb
         //如果相同则是该userkey的新值，否则是有新关键字的节点
         //对于相同的 user-key，最新的更新（SequnceNumber 更大）排在前面 
         assert(x == nullptr || !Equal(key, x->key));
+        Slice a = GetUserKey(key);
 
         if (x != nullptr) {
-            int r = icmp_.Compare(leveldb::ExtractUserKey(x->key), leveldb::ExtractUserKey(key));
+            Slice a = GetUserKey(key);
+            Slice b = GetUserKey(x->key);
+            int r = compare_(a.data(), b.data());
             if (r == 0) {
                 sameButOldest = FindNoSmaller(x);
                 is_new = true;
@@ -330,6 +334,13 @@ namespace leveldb
             
         }
 
+    }
+
+    template <typename Key, class Comparator>
+    Slice Twoqueue_SkipList<Key, Comparator>::GetUserKey(const char* entry) const { 
+        uint32_t key_length;
+        const char* key_ptr = GetVarint32Ptr(entry, entry + 5, &key_length);
+        return Slice(key_ptr, key_length - 8);
     }
 
     /*
