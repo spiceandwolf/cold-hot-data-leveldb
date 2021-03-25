@@ -17,6 +17,7 @@
 namespace leveldb {
 
   typedef char* Key;
+  const size_t kHeader = 12;
 
   struct TestKeyComparator {
 
@@ -46,17 +47,15 @@ namespace leveldb {
 
   std::string IKey(const std::string& user_key, uint64_t seq,
                         ValueType vt) {
+    Arena arena_;
     std::string rep_;
-    PutLengthPrefixedSlice(&rep_, user_key);
 
-    Slice input(rep_);
-    Slice key;
-    GetLengthPrefixedSlice(&input, &key);
+    Slice key(user_key);
 
     size_t key_size = key.size();
     size_t internal_key_size = key_size + 8;
     const size_t encoded_len = VarintLength(internal_key_size) + internal_key_size;
-    Arena arena_;
+    
     char* buf = arena_.Allocate(encoded_len);
     char* p = EncodeVarint32(buf, internal_key_size);
     std::memcpy(p, key.data(), key_size);
@@ -101,8 +100,8 @@ namespace leveldb {
     TestKeyComparator cmp(icmp);
     Twoqueue_SkipList<Key, TestKeyComparator> list(cmp, &arena);
 
-    for (int i = 0; i < N/4; i++) {
-      std::string ikey = IKey(NumberToString(1), i, kTypeValue);;
+    for (uint64_t i = 0; i < 87; i++) {
+      std::string ikey = IKey(std::to_string(i % 10), i + 1, kTypeValue);;
       if (keys.insert(ikey).second) {
         char* buf = new char[ikey.size()];
         strcpy(buf, ikey.c_str());
@@ -110,8 +109,8 @@ namespace leveldb {
       }
     }
 
-    for (int i = N/4; i < N/2; i++) {
-      std::string ikey = IKey(NumberToString((i % 500)), i, kTypeValue);;
+    for (uint64_t i = 88; i < N; i++) {
+      std::string ikey = IKey(std::to_string(i % 10), i + 1, kTypeValue);;
       if (keys.insert(ikey).second) {
         char* buf = new char[ikey.size()];
         strcpy(buf, ikey.c_str());
@@ -119,8 +118,8 @@ namespace leveldb {
       }
     }
 
-    for (int i = 0; i < R; i++) {
-      std::string ikey = IKey(NumberToString((i % 500)), i, kTypeValue);
+    for (uint64_t i = 0; i < R; i++) {
+      std::string ikey = IKey(std::to_string((i % 1000)), i + 1, kTypeValue);
       size_t size = ikey.size();
       char buf[size];
       strcpy(buf, ikey.c_str());      
@@ -130,6 +129,18 @@ namespace leveldb {
         ASSERT_EQ(keys.count(ikey), 0);
       }
     }
+
+    // for (int i = 2000; i < R; i++) {
+    //   std::string ikey = IKey(NumberToString((i % 1000)), i + 1, kTypeValue);
+    //   size_t size = ikey.size();
+    //   char buf[size];
+    //   strcpy(buf, ikey.c_str());      
+    //   if (list.Contains(buf)) {
+    //     ASSERT_EQ(keys.count(ikey), 1);
+    //   } else {
+    //     ASSERT_EQ(keys.count(ikey), 0);
+    //   }
+    // }
 
     // // Simple iterator tests
     // {

@@ -29,10 +29,14 @@ namespace leveldb
         //重定义insert()，在2qskiplist中插入2qNode
         void Insert(const Key& key);
         //Contains()函数没有变化
+        bool Contains(const Key& key) const;
         //Iterator已有的功能不需要变化
 
         //将数据插入2q队列
         void Insert_Twoqueue(Twoqueue_Node* node, Twoqueue_Node* sameButOldest, const bool& is_new);
+
+        //冷却数据，将数据数据添加到冷数据区
+        void frooze_Node(Twoqueue_Node* node);
 
         int RandomHeight();
         bool Equal(const Key& a, const Key& b) const { return (compare_(a, b) == 0); }
@@ -51,7 +55,7 @@ namespace leveldb
         Twoqueue_Node* FindGreaterOrEqual(const Key& key, Twoqueue_Node** prev) const;
         Twoqueue_Node* FindLessThan(const Key& key) const;
         Twoqueue_Node* FindLast() const;
-        //找到同一关键字最早的节点，若找不到则返回当前一节点
+        //找到同一关键字最早的节点，若找不到则返回当前节点
         Twoqueue_Node* FindNoSmaller(Twoqueue_Node* node) const;
         //抽取存储在每个节点key中的Userkey
         Slice GetUserKey(const char* entry) const;
@@ -230,26 +234,30 @@ namespace leveldb
         }
     }
 
+    //找到同一关键字最早的节点，若找不到则返回当前节点
     template <typename Key, class Comparator>
     typename Twoqueue_SkipList<Key, Comparator>::Twoqueue_Node*
     Twoqueue_SkipList<Key, Comparator>::FindNoSmaller(Twoqueue_Node* node) const {
         Twoqueue_Node* x = node;
-        int level = GetMaxHeight() - 1;
+        const char* key = node->key;
+
+        Slice a = GetUserKey(key);
+        Twoqueue_Node* next = x->Next(0);
+
         while (true) {
-            Twoqueue_Node* next = x->Next(level);
-            const char* aptr = x->key;
-            const char* bptr = next->key;
-            Slice a = GetUserKey(aptr);
-            Slice b = GetUserKey(bptr);
-            if ((next != nullptr) && 
-            (compare_(a.data(), b.data()) == 0)) {
-                x = next;
-            } else {
-                if (level == 0) {
-                    return x;
+            if (next != nullptr) {
+                const char* bptr = next->key;
+                Slice b = GetUserKey(bptr);
+                
+                if (a.compare(b) == 0) {
+                    x = next;
+                    next = next->Next(0);
                 } else {
-                    level--;
+                    return x;
                 }
+
+            } else {
+                return x;
             }
         }
     }
@@ -283,14 +291,13 @@ namespace leveldb
         //如果相同则是该userkey的新值，否则是有新关键字的节点
         //对于相同的 user-key，最新的更新（SequnceNumber 更大）排在前面 
         assert(x == nullptr || !Equal(key, x->key));
-        Slice a = GetUserKey(key);
 
         if (x != nullptr) {
             Slice a = GetUserKey(key);
-            Slice b = GetUserKey(prev[0]->key);
-            int r = compare_(a.data(), b.data());
+            Slice b = GetUserKey(x->key);
+            int r = a.compare(b);
             if (r == 0) {
-                sameButOldest = FindNoSmaller(prev[0]);
+                sameButOldest = FindNoSmaller(x);
                 is_new = true;
             }            
         }
@@ -336,6 +343,14 @@ namespace leveldb
 
     }
 
+    //从normal_head_开始，按照FIFO顺序，沿每个节点的follow_指针遍历，直到该node节点停止。
+    //cold_head_指向normal_head_所指向的节点
+    //normal_head_重新指向该node节点
+    template <typename Key, class Comparator>
+    void Twoqueue_SkipList<Key, Comparator>::frooze_Node(Twoqueue_Node* node) {
+        while (true) {}
+    }
+
     template <typename Key, class Comparator>
     Slice Twoqueue_SkipList<Key, Comparator>::GetUserKey(const char* entry) const { 
         uint32_t key_length;
@@ -343,12 +358,17 @@ namespace leveldb
         return Slice(key_ptr, key_length - 8);
     }
 
-    /*
+    
     template <typename Key, class Comparator>
     bool Twoqueue_SkipList<Key, Comparator>::Contains(const Key& key) const {
-        return SkipList<Key, Comparator>::Contains(key);
+        Twoqueue_Node* x = FindGreaterOrEqual(key, nullptr);
+        if (x != nullptr && Equal(key, x->key)) {
+            return true;
+        } else {
+            return false;
+        }
     }
-    */
+    
 } // namespace leveldb
 
 #endif // STORAGE_LEVELDB_DB_Twoqueue_SkipList_H
