@@ -32,11 +32,8 @@ namespace leveldb
         bool Contains(const Key& key) const;
         //Iterator已有的功能不需要变化
 
-        //将数据插入2q队列
-        void Insert_Twoqueue(Twoqueue_Node* node, Twoqueue_Node* sameButOldest, const bool& is_new);
-
-        //冷却数据，将数据数据添加到冷数据区
-        void frooze_Node(Twoqueue_Node* node);
+        //若插入了新的副本，则将旧版本移入废弃区。
+        void thaw_Node();
 
         int RandomHeight();
         bool Equal(const Key& a, const Key& b) const { return (compare_(a, b) == 0); }
@@ -59,13 +56,16 @@ namespace leveldb
         Twoqueue_Node* FindNoSmaller(Twoqueue_Node* node) const;
         //抽取存储在每个节点key中的Userkey
         Slice GetUserKey(const char* entry) const;
+        //冷却数据，将热数据添加到冷数据区
+        void frooze_Nodes(Twoqueue_Node* node);
 
         Comparator const compare_;//同skiplist
         Arena* const arena_;//同skiplist
 
         Twoqueue_Node* const head_;
-        Twoqueue_Node* const normal_head_;//热数据区
-        Twoqueue_Node* const cold_head_;//冷数据区
+        Twoqueue_Node* normal_head_;//热数据区
+        Twoqueue_Node* cold_head_;//冷数据区
+        Twoqueue_Node* obsolete_;//废弃区
 
         Twoqueue_Node* cur_scan_node_;//当前扫描到的节点
         Twoqueue_Node* cur_cold_node_;//当前最新的冷数据
@@ -73,16 +73,23 @@ namespace leveldb
 
         std::atomic<int> max_height_;//同skiplist
         Random rnd_;//同skiplist
-
-        // InternalKeyComparator icmp_;
     };
     
     template <typename Key, class Comparator>
     struct Twoqueue_SkipList<Key, Comparator>::Twoqueue_Node {
         /* data */
-        explicit Twoqueue_Node(const Key& k) : key(k), follow_(nullptr), new_(nullptr) {}
+        explicit Twoqueue_Node(const Key& k, const int& h) : 
+            key(k), 
+            follow_(nullptr), 
+            new_(nullptr) {
+                node_size = sizeof(Twoqueue_Node) + sizeof(std::atomic<Twoqueue_Node*>) * (h - 1);
+            }
 
         Key const key;
+
+        size_t getSize() {
+            return node_size;
+        }
 
         //确保线程安全的方法
         Twoqueue_Node* Next(int n) {
@@ -139,9 +146,11 @@ namespace leveldb
         }
 
         private:
-        std::atomic<Twoqueue_Node*> next_[1];//在skiplist中的下一个
+        size_t node_size;//占有的层数
         std::atomic<Twoqueue_Node*> follow_;//在2q中FIFO顺序的下一值
         std::atomic<Twoqueue_Node*> new_;//在2q中的同一关键字的新的值
+        std::atomic<Twoqueue_Node*> next_[1];//在skiplist中的下一个
+        
     };
 
     template <typename Key, class Comparator>
@@ -151,7 +160,7 @@ namespace leveldb
         char* const node_memorey = arena_->AllocateAligned(
             sizeof(Twoqueue_Node) + sizeof(std::atomic<Twoqueue_Node*>) * (height - 1)
         );
-        return new (node_memorey) Twoqueue_Node(key);
+        return new (node_memorey) Twoqueue_Node(key, height);
     }
 
     template <typename Key, class Comparator>
@@ -269,10 +278,11 @@ namespace leveldb
     arena_(arena),
     head_(NewTwoqueue_Node(0, kMaxHeight)),
     normal_head_(head_),
-    cold_head_(nullptr),
+    cold_head_(normal_head_),//如何初始化
+    obsolete_(nullptr),
     cur_scan_node_(head_),
     cur_node_(head_),
-    cur_cold_node_(nullptr),
+    cur_cold_node_(cold_head_),
     max_height_(1), 
     rnd_(0xdeadbeef) {
         for (int i = 0; i < kMaxHeight; i++) {
@@ -318,38 +328,39 @@ namespace leveldb
             prev[i]->SetNext(i, x);
         }
         
+        //根据is_new判断，若is_new为true，说明是相同的userkey,
+        //则将该节点添加到后一节点的new_指针上
+        if (is_new) {
+            x->Next(0)->SetNew(x);
+        }
         //插入2q链表
-        Insert_Twoqueue(x, sameButOldest, is_new);
+        cur_node_->SetFollow(x);
+        //完成插入后，节点x成为cur_node_
         cur_node_ = x;
     }
 
-    //根据is_new判断插入new_还是follow_
-    //is_new为true，说明是相同的userkey,
-        //则将该节点添加到后一节点的new_指针上，cur_node_所指节点的follow_指针指向该userkry的第一个节点
-    //is_new为false，说明是不同的userkey,
-        //则将该节点添加到cur_node_所指节点的follow_指针上
+    //在热数据区中从cur_scan_node_开始沿FIFO的方向链表扫描，
+    //根据经过扫描的节点所用空间的大小之和与插入节点的大小，判断需要移动的节点个数
+    //每次扫描至少需要移动1个节点。
     template <typename Key, class Comparator>
-    void Twoqueue_SkipList<Key, Comparator>::Insert_Twoqueue(
-        Twoqueue_Node* node, Twoqueue_Node* sameButOldest, const bool& is_new) {
-        
-        if (is_new) {
-            node->Next(0)->SetNew(node);
-            cur_node_->SetFollow(sameButOldest);
-            
-        } else {
-            cur_node_->SetFollow(node);
-            
+    void Twoqueue_SkipList<Key, Comparator>::frooze_Nodes(Twoqueue_Node* node) {
+        Twoqueue_Node* selected_node = cur_scan_node_->Follow();
+        size_t wanted_size = node->getSize();
+        size_t total_size = selected_node->getSize();
+
+        while (wanted_size >= total_size) {
+            selected_node = selected_node->Follow();
+            total_size += selected_node->getSize();
         }
 
+        cur_cold_node_ = selected_node;
+        normal_head_ = selected_node;
+
     }
 
-    //从normal_head_开始，按照FIFO顺序，沿每个节点的follow_指针遍历，直到该node节点停止。
-    //cold_head_指向normal_head_所指向的节点
-    //normal_head_重新指向该node节点
+    //根据该数据的seq与normal_head_所指节点的seq相对比，若不小于则是热数据，若小于则是冷数据
     template <typename Key, class Comparator>
-    void Twoqueue_SkipList<Key, Comparator>::frooze_Node(Twoqueue_Node* node) {
-        while (true) {}
-    }
+    void Twoqueue_SkipList<Key, Comparator>::thaw_Node() {}
 
     template <typename Key, class Comparator>
     Slice Twoqueue_SkipList<Key, Comparator>::GetUserKey(const char* entry) const { 
