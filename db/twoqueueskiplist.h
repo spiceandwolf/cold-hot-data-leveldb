@@ -31,9 +31,7 @@ namespace leveldb
         //Contains()函数没有变化
         bool Contains(const Key& key) const;
         //Iterator已有的功能不需要变化
-
-        //若插入了新的副本，则将旧版本移入废弃区。
-        void thaw_Node();
+        
 
         int RandomHeight();
         bool Equal(const Key& a, const Key& b) const { return (compare_(a, b) == 0); }
@@ -55,9 +53,13 @@ namespace leveldb
         //找到同一关键字最早的节点，若找不到则返回当前节点
         Twoqueue_Node* FindNoSmaller(Twoqueue_Node* node) const;
         //抽取存储在每个节点key中的Userkey
-        Slice GetUserKey(const char* entry) const;
+        Slice GetUserKey(const Key& entry) const;
+        //抽取存储在每个节点key中的seqnumber
+        uint64_t GetSeqNumber(const Key& entry) const;
         //冷却数据，将热数据添加到冷数据区
-        void frooze_Nodes(Twoqueue_Node* node);
+        void FreezeNodes(Twoqueue_Node* node);
+        //从2Q链表中除去老版本
+        void ThawNode(Twoqueue_Node* node);
 
         Comparator const compare_;//同skiplist
         Arena* const arena_;//同skiplist
@@ -81,7 +83,7 @@ namespace leveldb
         explicit Twoqueue_Node(const Key& k, const int& h) : 
             key(k), 
             follow_(nullptr), 
-            new_(nullptr) {
+            precede_(nullptr) {
                 node_size = sizeof(Twoqueue_Node) + sizeof(std::atomic<Twoqueue_Node*>) * (h - 1);
             }
 
@@ -101,8 +103,8 @@ namespace leveldb
             return follow_.load(std::memory_order_acquire);
         }
 
-        Twoqueue_Node* New() {
-            return new_.load(std::memory_order_acquire);
+        Twoqueue_Node* Precede() {
+            return precede_.load(std::memory_order_acquire);
         }
 
         void SetNext(int n, Twoqueue_Node* x) {
@@ -114,8 +116,8 @@ namespace leveldb
             follow_.store(x, std::memory_order_release);
         }
 
-        void SetNew(Twoqueue_Node* x) {
-            new_.store(x, std::memory_order_release);
+        void SetPrecede(Twoqueue_Node* x) {
+            precede_.store(x, std::memory_order_release);
         }
 
         //在某些线程安全的情况下使用
@@ -128,8 +130,8 @@ namespace leveldb
             return follow_.load(std::memory_order_relaxed);
         }
 
-        Twoqueue_Node* NoBarrier_New() {
-            return new_.load(std::memory_order_relaxed);
+        Twoqueue_Node* NoBarrier_Precede() {
+            return precede_.load(std::memory_order_relaxed);
         }
 
         void NoBarrier_SetNext(int n, Twoqueue_Node* x) {
@@ -141,14 +143,14 @@ namespace leveldb
             follow_.store(x, std::memory_order_relaxed);
         }
 
-        void NoBarrier_SetNew(Twoqueue_Node* x) {
-            new_.store(x, std::memory_order_relaxed);
+        void NoBarrier_SetPrecede(Twoqueue_Node* x) {
+            precede_.store(x, std::memory_order_relaxed);
         }
 
         private:
         size_t node_size;//占有的层数
         std::atomic<Twoqueue_Node*> follow_;//在2q中FIFO顺序的下一值
-        std::atomic<Twoqueue_Node*> new_;//在2q中的同一关键字的新的值
+        std::atomic<Twoqueue_Node*> precede_;//在2q中FIFO顺序的前一值
         std::atomic<Twoqueue_Node*> next_[1];//在skiplist中的下一个
         
     };
@@ -294,7 +296,6 @@ namespace leveldb
     void Twoqueue_SkipList<Key, Comparator>::Insert(const Key& key) {
         Twoqueue_Node* prev[kMaxHeight];//存储要插入skiplist的节点的相邻的前一个节点
         Twoqueue_Node* x = FindGreaterOrEqual(key, prev);//存储要插入skiplist的节点的相邻的后一个节点
-        Twoqueue_Node* sameButOldest = nullptr;//存储要插入skiplist的节点有相同关键字的第一个节点
         bool is_new = false;
 
         //将节点插入2q链表中,比较新插入的节点的userkey和与它紧邻的后一userkey,
@@ -307,7 +308,6 @@ namespace leveldb
             Slice b = GetUserKey(x->key);
             int r = a.compare(b);
             if (r == 0) {
-                sameButOldest = FindNoSmaller(x);
                 is_new = true;
             }            
         }
@@ -327,24 +327,26 @@ namespace leveldb
             x->NoBarrier_SetNext(i, prev[i]->NoBarrier_Next(i));
             prev[i]->SetNext(i, x);
         }
-        
-        //根据is_new判断，若is_new为true，说明是相同的userkey,
-        //则将该节点添加到后一节点的new_指针上
-        if (is_new) {
-            x->Next(0)->SetNew(x);
-        }
-        //插入2q链表
+       
+        //插入2q链表，为cur_node_添加follow_和把x的precede_指向cur_node_
         cur_node_->SetFollow(x);
+        x->SetPrecede(cur_node_);
+        x->SetFollow(nullptr);
         //完成插入后，节点x成为cur_node_
         cur_node_ = x;
+
+        //如果是新值在2q链表中摘除旧版本节点
+        if (is_new) {
+            ThawNode(cur_node_);
+        }
     }
 
-    //在热数据区中从cur_scan_node_开始沿FIFO的方向链表扫描，
+    //在热数据区中从normal_head_开始沿FIFO的方向链表扫描，
     //根据经过扫描的节点所用空间的大小之和与插入节点的大小，判断需要移动的节点个数
     //每次扫描至少需要移动1个节点。
     template <typename Key, class Comparator>
-    void Twoqueue_SkipList<Key, Comparator>::frooze_Nodes(Twoqueue_Node* node) {
-        Twoqueue_Node* selected_node = cur_scan_node_->Follow();
+    void Twoqueue_SkipList<Key, Comparator>::FreezeNodes(Twoqueue_Node* node) {
+        Twoqueue_Node* selected_node = normal_head_->Follow();
         size_t wanted_size = node->getSize();
         size_t total_size = selected_node->getSize();
 
@@ -354,21 +356,45 @@ namespace leveldb
         }
 
         cur_cold_node_ = selected_node;
-        normal_head_ = selected_node;
+        selected_node = selected_node->Follow();
+        normal_head_->SetFollow(selected_node);
 
     }
 
-    //根据该数据的seq与normal_head_所指节点的seq相对比，若不小于则是热数据，若小于则是冷数据
+    //找到旧版本节点，将旧版本节点从FIFO链表中摘除
+    //在FIFO链表中旧版本节点的前一节点follow_指针指向旧版本节点的后一节点，
+    //旧版本节点的后一节点的precede_指针指向前一节点
+    //用旧版本节点的follow_指针指向obsolete_的follow_所指向的节点，
+    //然后令obsolete_的follow_指针指向旧版本节点
     template <typename Key, class Comparator>
-    void Twoqueue_SkipList<Key, Comparator>::thaw_Node() {}
+    void Twoqueue_SkipList<Key, Comparator>::ThawNode(Twoqueue_Node* node) {
+        Twoqueue_Node* elder = node->Next(0);
+        Twoqueue_Node* prev = elder->Precede();
 
+        prev->SetFollow(elder->Follow());
+        elder->Follow()->SetPrecede(prev);
+
+        elder->SetFollow(obsolete_->Follow());
+        obsolete_->SetFollow(elder)；
+    }
+
+    //从key中抽取userkey
     template <typename Key, class Comparator>
-    Slice Twoqueue_SkipList<Key, Comparator>::GetUserKey(const char* entry) const { 
+    Slice Twoqueue_SkipList<Key, Comparator>::GetUserKey(const Key& entry) const { 
         uint32_t key_length;
         const char* key_ptr = GetVarint32Ptr(entry, entry + 5, &key_length);
         return Slice(key_ptr, key_length - 8);
     }
 
+    //从key中抽取SeqNumber
+    template <typename Key, class Comparator>
+    uint64_t Twoqueue_SkipList<Key, Comparator>::GetSeqNumber(const Key& entry) const {
+        uint32_t key_length;
+        const char* key_ptr = GetVarint32Ptr(entry, entry + 5, &key_length);
+        Slice key = Slice(key_ptr, key_length);
+        const uint64_t seq = DecodeFixed64(key.data() + key.size() - 8);
+        return seq;
+    }
     
     template <typename Key, class Comparator>
     bool Twoqueue_SkipList<Key, Comparator>::Contains(const Key& key) const {
