@@ -21,13 +21,13 @@ namespace leveldb
         struct Twoqueue_Node;//2qskiplist下的节点
         
     public:
-        explicit Twoqueue_SkipList(Comparator cmp, Arena* arena);
+        explicit Twoqueue_SkipList(Comparator cmp, Arena* arena, const size_t& write_buffer_size);
 
         Twoqueue_SkipList(const Twoqueue_SkipList&) = delete;
         Twoqueue_SkipList& operator=(const Twoqueue_SkipList&) = delete;
 
         //重定义insert()，在2qskiplist中插入2qNode
-        void Insert(const Key& key);
+        void Insert(const Key& key, const size_t& encoded_len);
         //Contains()函数没有变化
         bool Contains(const Key& key) const;
         //Iterator已有的功能不需要变化
@@ -44,7 +44,7 @@ namespace leveldb
         }
 
         //因为是在父类中是私有的，所以这几个函数都要重新定义
-        Twoqueue_Node* NewTwoqueue_Node(const Key& key, int height);
+        Twoqueue_Node* NewTwoqueue_Node(const Key& key, int height, const size_t& encoded_len);
 
         bool KeyIsAfterNode(const Key& key, Twoqueue_Node* n) const;
         Twoqueue_Node* FindGreaterOrEqual(const Key& key, Twoqueue_Node** prev) const;
@@ -75,21 +75,25 @@ namespace leveldb
 
         std::atomic<int> max_height_;//同skiplist
         Random rnd_;//同skiplist
+        size_t normal_area_size;//热数据区所占总空间
+        size_t cold_area_size;//冷数据区所占总空间
+        size_t option_normal_size;//Option中设定的memtable的最大值
     };
     
     template <typename Key, class Comparator>
     struct Twoqueue_SkipList<Key, Comparator>::Twoqueue_Node {
         /* data */
-        explicit Twoqueue_Node(const Key& k, const int& h) : 
+        explicit Twoqueue_Node(const Key& k, const int& h, const size_t& encoded_len) : 
             key(k), 
             follow_(nullptr), 
             precede_(nullptr) {
-                node_size = sizeof(Twoqueue_Node) + sizeof(std::atomic<Twoqueue_Node*>) * (h - 1);
+                node_size = sizeof(Twoqueue_Node) + sizeof(std::atomic<Twoqueue_Node*>) * (h - 1)
+                    + encoded_len;
             }
 
         Key const key;
 
-        size_t getSize() {
+        size_t GetSize() {
             return node_size;
         }
 
@@ -147,7 +151,7 @@ namespace leveldb
             precede_.store(x, std::memory_order_relaxed);
         }
 
-        private:
+    private:
         size_t node_size;//占有的层数
         std::atomic<Twoqueue_Node*> follow_;//在2q中FIFO顺序的下一值
         std::atomic<Twoqueue_Node*> precede_;//在2q中FIFO顺序的前一值
@@ -157,12 +161,11 @@ namespace leveldb
 
     template <typename Key, class Comparator>
     typename Twoqueue_SkipList<Key, Comparator>::Twoqueue_Node* Twoqueue_SkipList<Key, Comparator>::NewTwoqueue_Node(
-        const Key& key, int height
-    ) {
+        const Key& key, int height, const size_t& encoded_len) {
         char* const node_memorey = arena_->AllocateAligned(
             sizeof(Twoqueue_Node) + sizeof(std::atomic<Twoqueue_Node*>) * (height - 1)
         );
-        return new (node_memorey) Twoqueue_Node(key, height);
+        return new (node_memorey) Twoqueue_Node(key, height, encoded_len);
     }
 
     template <typename Key, class Comparator>
@@ -274,26 +277,29 @@ namespace leveldb
     }
 
     template <typename Key, class Comparator>
-    Twoqueue_SkipList<Key, Comparator>::Twoqueue_SkipList(Comparator cmp, Arena* arena)
-    : SkipList<Key, Comparator>(cmp, arena), 
-    compare_(cmp),
-    arena_(arena),
-    head_(NewTwoqueue_Node(0, kMaxHeight)),
-    normal_head_(head_),
-    cold_head_(normal_head_),//如何初始化
-    obsolete_(nullptr),
-    cur_scan_node_(head_),
-    cur_node_(head_),
-    cur_cold_node_(cold_head_),
-    max_height_(1), 
-    rnd_(0xdeadbeef) {
+    Twoqueue_SkipList<Key, Comparator>::Twoqueue_SkipList(Comparator cmp, Arena* arena,
+     const size_t& write_buffer_size) : SkipList<Key, Comparator>(cmp, arena), 
+        compare_(cmp),
+        arena_(arena),
+        head_(NewTwoqueue_Node(0, kMaxHeight, 0)),
+        normal_head_(head_),
+        cold_head_(head_),
+        obsolete_(nullptr),
+        cur_scan_node_(head_),
+        cur_node_(normal_head_),
+        cur_cold_node_(cold_head_),
+        max_height_(1), 
+        rnd_(0xdeadbeef),
+        normal_area_size(0), 
+        cold_area_size(0),
+        option_normal_size(write_buffer_size) {
         for (int i = 0; i < kMaxHeight; i++) {
             head_->SetNext(i, nullptr);
         }
     }
     
     template <typename Key, class Comparator>
-    void Twoqueue_SkipList<Key, Comparator>::Insert(const Key& key) {
+    void Twoqueue_SkipList<Key, Comparator>::Insert(const Key& key, const size_t& encoded_len) {
         Twoqueue_Node* prev[kMaxHeight];//存储要插入skiplist的节点的相邻的前一个节点
         Twoqueue_Node* x = FindGreaterOrEqual(key, prev);//存储要插入skiplist的节点的相邻的后一个节点
         bool is_new = false;
@@ -322,12 +328,20 @@ namespace leveldb
         }
         
         //插入skiplist
-        x = NewTwoqueue_Node(key, height);
+        x = NewTwoqueue_Node(key, height, encoded_len);
         for (int i = 0; i < height; i++) {
             x->NoBarrier_SetNext(i, prev[i]->NoBarrier_Next(i));
             prev[i]->SetNext(i, x);
         }
        
+        //如果热数据区已满，则先移动出足够的空间
+        if (normal_area_size > option_normal_size) {
+            FreezeNodes(x);
+        }
+
+        //新节点一定插入在热数据区
+        normal_area_size += x->GetSize();
+
         //插入2q链表，为cur_node_添加follow_和把x的precede_指向cur_node_
         cur_node_->SetFollow(x);
         x->SetPrecede(cur_node_);
@@ -343,22 +357,26 @@ namespace leveldb
 
     //在热数据区中从normal_head_开始沿FIFO的方向链表扫描，
     //根据经过扫描的节点所用空间的大小之和与插入节点的大小，判断需要移动的节点个数
-    //每次扫描至少需要移动1个节点。
+    //每次扫描至少需要移动1个节点
+    //移动结束后，热数据区所占空间减少相应的大小，冷数据区增加相应的大小
     template <typename Key, class Comparator>
     void Twoqueue_SkipList<Key, Comparator>::FreezeNodes(Twoqueue_Node* node) {
-        Twoqueue_Node* selected_node = normal_head_->Follow();
-        size_t wanted_size = node->getSize();
-        size_t total_size = selected_node->getSize();
+        Twoqueue_Node* selected_node = normal_head_;
+        size_t wanted_size = node->GetSize();
+        size_t total_size = selected_node->GetSize();
 
         while (wanted_size >= total_size) {
             selected_node = selected_node->Follow();
-            total_size += selected_node->getSize();
+            total_size += selected_node->GetSize();
         }
 
         cur_cold_node_ = selected_node;
         selected_node = selected_node->Follow();
-        normal_head_->SetFollow(selected_node);
+        normal_head_ = selected_node;
 
+        //两区域所占空间的变化
+        normal_area_size -= total_size;
+        cold_area_size += total_size;
     }
 
     //找到旧版本节点，将旧版本节点从FIFO链表中摘除
@@ -366,16 +384,29 @@ namespace leveldb
     //旧版本节点的后一节点的precede_指针指向前一节点
     //用旧版本节点的follow_指针指向obsolete_的follow_所指向的节点，
     //然后令obsolete_的follow_指针指向旧版本节点
+    //根据旧版本节点所在区域(冷/热数据区)修改两个区域所占空间的大小
     template <typename Key, class Comparator>
     void Twoqueue_SkipList<Key, Comparator>::ThawNode(Twoqueue_Node* node) {
         Twoqueue_Node* elder = node->Next(0);
         Twoqueue_Node* prev = elder->Precede();
 
+        //判断旧版本节点存在于热数据区还是冷数据区
+        uint64_t seq = GetSeqNumber(elder->key);
+        uint64_t cur_seq = GetSeqNumber(normal_head_->key);
+        if (seq > cur_seq) {
+            //说明旧版本节点在热数据区
+            normal_area_size -= elder->GetSize();
+        } else {
+            //说明旧版本节点在冷数据区
+            cold_area_size -= elder->GetSize();
+        }
+       
+        //将旧版本节点移到废弃区
         prev->SetFollow(elder->Follow());
         elder->Follow()->SetPrecede(prev);
 
         elder->SetFollow(obsolete_->Follow());
-        obsolete_->SetFollow(elder)；
+        obsolete_->SetFollow(elder);
     }
 
     //从key中抽取userkey

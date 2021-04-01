@@ -12,6 +12,8 @@
 #include "leveldb/db.h"
 #include "util/arena.h"
 
+#include "db/twoqueueskiplist.h"
+
 namespace leveldb {
 
 class InternalKeyComparator;
@@ -22,6 +24,9 @@ class MemTable {
   // MemTables are reference counted.  The initial reference count
   // is zero and the caller must call Ref() at least once.
   explicit MemTable(const InternalKeyComparator& comparator);
+
+  //使用2Q跳表的MemTable
+  MemTable(const InternalKeyComparator& comparator, const size_t& write_buffer_size);
 
   MemTable(const MemTable&) = delete;
   MemTable& operator=(const MemTable&) = delete;
@@ -56,6 +61,10 @@ class MemTable {
   void Add(SequenceNumber seq, ValueType type, const Slice& key,
            const Slice& value);
 
+  //将一个entry添加到memtable的TwoQueueSkipList中，功能同Add()
+  void Add_TwoQueue(SequenceNumber seq, ValueType type, const Slice& key,
+                    const Slice& value);
+
   // If memtable contains a value for key, store it in *value and return true.
   // If memtable contains a deletion for key, store a NotFound() error
   // in *status and return true.
@@ -73,6 +82,8 @@ class MemTable {
   };
 
   typedef SkipList<const char*, KeyComparator> Table;
+  //使用2Q跳表
+  typedef Twoqueue_SkipList<const char*, KeyComparator> TQTable;
 
   ~MemTable();  // Private since only Unref() should be used to delete it
 
@@ -80,6 +91,11 @@ class MemTable {
   int refs_;
   Arena arena_;
   Table table_;
+
+  //2Q跳表
+  TQTable tqtable_;
+  //写内存的最大尺寸
+  const size_t write_buffer_size;
 };
 
 }  // namespace leveldb
