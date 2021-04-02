@@ -1,8 +1,4 @@
-// Copyright (c) 2011 The LevelDB Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file. See the AUTHORS file for names of contributors.
-
-#include "db/memtable.h"
+#include "db/tqmemtable.h"
 #include "db/dbformat.h"
 #include "leveldb/comparator.h"
 #include "leveldb/env.h"
@@ -18,8 +14,8 @@ static Slice GetLengthPrefixedSlice(const char* data) {
   return Slice(p, len);
 }
 
-MemTable::MemTable(const InternalKeyComparator& comparator)
-    : comparator_(comparator), refs_(0), table_(comparator_, &arena_) {}
+MemTable::MemTable(const InternalKeyComparator& comparator, const size_t& write_buffer_size)
+    : comparator_(comparator), refs_(0), tqtable_(comparator_, &arena_, write_buffer_size) {}
 
 MemTable::~MemTable() { assert(refs_ == 0); }
 
@@ -33,9 +29,6 @@ int MemTable::KeyComparator::operator()(const char* aptr,
   return comparator.Compare(a, b);
 }
 
-// Encode a suitable internal key target for "target" and return it.
-// Uses *scratch as scratch space, and the returned pointer will point
-// into this scratch space.
 static const char* EncodeKey(std::string* scratch, const Slice& target) {
   scratch->clear();
   PutVarint32(scratch, target.size());
@@ -45,7 +38,9 @@ static const char* EncodeKey(std::string* scratch, const Slice& target) {
 
 class MemTableIterator : public Iterator {
  public:
-  explicit MemTableIterator(MemTable::Table* table) : iter_(table) {}
+
+  //使用2Q跳表
+  explicit MemTableIterator(MemTable::TQTable* table) : iter_(table) {}
 
   MemTableIterator(const MemTableIterator&) = delete;
   MemTableIterator& operator=(const MemTableIterator&) = delete;
@@ -67,20 +62,17 @@ class MemTableIterator : public Iterator {
   Status status() const override { return Status::OK(); }
 
  private:
-  MemTable::Table::Iterator iter_;
+  //2Q跳表
+  MemTable::TQTable::Iterator iter_;
 
   std::string tmp_;  // For passing to EncodeKey
 };
 
-Iterator* MemTable::NewIterator() { return new MemTableIterator(&table_); }
+Iterator* MemTable::NewIterator() { return new MemTableIterator(&tqtable_); }
 
+//最后插入到TwoQueueSkipList中
 void MemTable::Add(SequenceNumber s, ValueType type, const Slice& key,
-                   const Slice& value) {
-  // Format of an entry is concatenation of:
-  //  key_size     : varint32 of internal_key.size()
-  //  key bytes    : char[internal_key.size()]
-  //  value_size   : varint32 of value.size()
-  //  value bytes  : char[value.size()]
+                            const Slice& value) {
   size_t key_size = key.size();
   size_t val_size = value.size();
   size_t internal_key_size = key_size + 8;
@@ -96,12 +88,12 @@ void MemTable::Add(SequenceNumber s, ValueType type, const Slice& key,
   p = EncodeVarint32(p, val_size);
   std::memcpy(p, value.data(), val_size);
   assert(p + val_size == buf + encoded_len);
-  table_.Insert(buf);
+  tqtable_.Insert(buf, encoded_len);                         
 }
 
 bool MemTable::Get(const LookupKey& key, std::string* value, Status* s) {
   Slice memkey = key.memtable_key();
-  Table::Iterator iter(&table_);
+  TQTable::Iterator iter(&tqtable_);
   iter.Seek(memkey.data());
   if (iter.Valid()) {
     // entry format is:

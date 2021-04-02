@@ -7,7 +7,6 @@
 
 #include "db/skiplist.h"
 #include "db/dbformat.h"
-#include "db/memtable.cc"
 
 namespace leveldb
 {

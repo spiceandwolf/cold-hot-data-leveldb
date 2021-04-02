@@ -144,6 +144,8 @@ target_sources(leveldb
     "db/snapshot.h"
     "db/table_cache.cc"
     "db/table_cache.h"
+    "db/tqmemtable.cc"
+    "db/tqmemtable.h"
     "db/twoqueueskiplist.h"
     "db/version_edit.cc"
     "db/version_edit.h"
