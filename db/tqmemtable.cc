@@ -21,6 +21,14 @@ MemTable::~MemTable() { assert(refs_ == 0); }
 
 size_t MemTable::ApproximateMemoryUsage() { return arena_.MemoryUsage(); }
 
+size_t MemTable::ApproximateColdArea() { return tqtable_.GetColdAreaSize(); }
+
+size_t MemTable::ApproximateNormalArea() { return tqtable_.GetNormalAreaSize(); }
+
+//
+void CreateNewAndImm(MemTable* newmem) {
+}
+
 int MemTable::KeyComparator::operator()(const char* aptr,
                                         const char* bptr) const {
   // Internal keys are encoded as length-prefixed strings.

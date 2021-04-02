@@ -4,6 +4,8 @@
 #include <atomic>
 #include <cassert>
 #include <cstdlib>
+#include <vector>
+#include <utility>
 
 #include "db/skiplist.h"
 #include "db/dbformat.h"
@@ -30,10 +32,16 @@ namespace leveldb
         //Contains()函数没有变化
         bool Contains(const Key& key) const;
         //Iterator已有的功能不需要变化
-        
 
         int RandomHeight();
         bool Equal(const Key& a, const Key& b) const { return (compare_(a, b) == 0); }
+
+        //返回冷数据区的大小
+        size_t GetColdAreaSize() const { return cold_area_size; }
+        //返回热数据区的大小
+        size_t GetNormalAreaSize() const { return normal_area_size; }
+        //遍历2Q跳表，将热数据区的键值对保存进
+        std::vector<std::pair<Slice, Slice>> Seperate();
 
     private:
         enum { kMaxHeight = 12};
@@ -57,7 +65,7 @@ namespace leveldb
         uint64_t GetSeqNumber(const Key& entry) const;
         //冷却数据，将热数据添加到冷数据区
         void FreezeNodes(Twoqueue_Node* node);
-        //从2Q链表中除去老版本
+        //从2Q跳表中除去老版本
         void ThawNode(Twoqueue_Node* node);
 
         Comparator const compare_;//同skiplist
@@ -353,6 +361,50 @@ namespace leveldb
             ThawNode(cur_node_);
         }
     }
+
+    //以normal_head_指向的节点的seq为基准
+    //取出seq不小于guardseq的节点,构造键值对放入vector中
+    //在2Q链表中摘除这些点及对应的旧版本节点
+    template <typename Key, class Comparator>
+    std::vector<std::pair<Slice, Slice>> Twoqueue_SkipList<Key, Comparator>::Seperate() {
+        Twoqueue_Node* guard = normal_head_;
+        Twoqueue_Node* iter_ = head_;
+        uint64_t guard_seq = GetSeqNumber(guard->key);
+        std::vector<std::pair<Slice, Slice>> normal_nodes_;
+
+        //遍历2Q跳表
+        while (iter_ != nullptr) {
+            uint64_t iter_seq = GetSeqNumber(iter_->key);
+
+            //热数据区的节点加入vector,冷数据区的数据则不处理
+            //与后一节点的userkey比较，判断是否为同一userkey
+            //若相同则直接跳到相同userkey的最后一节点
+            if (iter_seq >= guard_seq) {
+                const char* entry = iter_->key;
+                uint32_t key_length;
+                const char* key_ptr = GetVarint32Ptr(entry, entry + 5, &key_length);
+
+                //userkey
+                Slice user_key = Slice(key_ptr, key_length - 8);
+
+                //根据标志位判断是有效值还是已删除
+                //有效值则加入vector
+                //已删除则跳过
+                const uint64_t tag = DecodeFixed64(key_ptr + key_length - 8);
+                switch (static_cast<ValueType>(tag & 0xff)) {
+                    case kTypeValue : {
+                        Slice value = GetLengthPrefixedSlice(key_ptr + key_length);
+                        std::pair<Slice, Slice> item(user_key, value);
+                        normal_nodes_.push_back(item);
+                    }
+                    case kTypeDeletion : {
+
+                    }
+                }
+            }
+        }
+
+    }    
 
     //在热数据区中从normal_head_开始沿FIFO的方向链表扫描，
     //根据经过扫描的节点所用空间的大小之和与插入节点的大小，判断需要移动的节点个数

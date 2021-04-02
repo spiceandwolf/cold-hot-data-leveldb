@@ -27,6 +27,15 @@ public:
 
   size_t ApproximateMemoryUsage();
 
+  //返回2Q跳表中冷数据区的大小
+  size_t ApproximateColdArea();
+  //返回2Q跳表中热数据区的大小
+  size_t ApproximateNormalArea();
+
+  //分裂原memtable，
+  //生成新的包含原热数据区的memtable和冷数据区转变成的imm_memtable
+  void CreateNewAndImm(MemTable* newmem);
+
   Iterator* NewIterator();
 
   //将一个entry添加到memtable的TwoQueueSkipList中，功能同Add()
@@ -56,8 +65,7 @@ private:
 
   //2Q跳表
   TQTable tqtable_;
-  //写内存的最大尺寸
-//   const size_t write_buffer_size;                    
+                   
 };
 
 } // namespace leveldb
