@@ -368,40 +368,75 @@ namespace leveldb
     template <typename Key, class Comparator>
     std::vector<std::pair<Slice, Slice>> Twoqueue_SkipList<Key, Comparator>::Seperate() {
         Twoqueue_Node* guard = normal_head_;
-        Twoqueue_Node* iter_ = head_;
+        Twoqueue_Node* iter_ = normal_head_;
         uint64_t guard_seq = GetSeqNumber(guard->key);
         std::vector<std::pair<Slice, Slice>> normal_nodes_;
 
-        //遍历2Q跳表
+        //从normal_head_遍历，构造键值对，将键值对插入vector中
+        //同时将该节点的旧版本节点全部摘除
         while (iter_ != nullptr) {
-            uint64_t iter_seq = GetSeqNumber(iter_->key);
+            //userkey
+            const char* entry = iter_->key;
+            uint32_t key_length;
+            const char* key_ptr = GetVarint32Ptr(entry, entry + 5, &key_length);
+            Slice user_key = Slice(key_ptr, key_length - 8);
 
-            //热数据区的节点加入vector,冷数据区的数据则不处理
-            //与后一节点的userkey比较，判断是否为同一userkey
-            //若相同则直接跳到相同userkey的最后一节点
-            if (iter_seq >= guard_seq) {
-                const char* entry = iter_->key;
-                uint32_t key_length;
-                const char* key_ptr = GetVarint32Ptr(entry, entry + 5, &key_length);
+            //value
+            Slice value = GetLengthPrefixedSlice(key_ptr + key_length);
 
-                //userkey
-                Slice user_key = Slice(key_ptr, key_length - 8);
+            //插入vector
+            std::pair<Slice, Slice> item(user_key, value);
+            normal_nodes_.push_back(item);
 
-                //根据标志位判断是有效值还是已删除
-                //有效值则加入vector
-                //已删除则跳过
-                const uint64_t tag = DecodeFixed64(key_ptr + key_length - 8);
-                switch (static_cast<ValueType>(tag & 0xff)) {
-                    case kTypeValue : {
-                        Slice value = GetLengthPrefixedSlice(key_ptr + key_length);
-                        std::pair<Slice, Slice> item(user_key, value);
-                        normal_nodes_.push_back(item);
-                    }
-                    case kTypeDeletion : {
-
-                    }
-                }
+            //摘除旧版本节点
+            Twoqueue_Node* next = FindNoSmaller(iter_);
+            if (next != iter_) {
+                iter_->SetNext(0, next->Next(0));
             }
+        }
+
+        //遍历整个skiplist,以normal_head_指向的节点的seq为基准，
+        //摘除所有冷数据区节点的旧版本节点和热数据区节点
+
+        //首先确定head_是从冷数据区开始
+        iter_ = head_;
+        const char* entry = iter_->key;
+        uint64_t seq = GetSeqNumber(entry);
+
+        while (seq >= guard_seq) {
+            iter_ = iter_->Next(0);
+            entry = iter_->key;
+            seq = GetSeqNumber(entry);
+        }
+
+        head_ = iter_;
+        Slice user_key = GetUserKey(entry);
+        Twoqueue_Node* next = iter_->Next(0);
+
+        //判断next_指针指向的节点是否为旧版本节点
+        //若next为nullptr,则iter_已指向最后一个节点
+        while (next != nullptr) {           
+            
+            const char* next_key = next->key;
+            Slice next_user_key = GetUserKey(next_key);
+            uint64_t next_seq = GetSeqNumber(next_key);
+
+            //如果next_指针指向的节点是相同关键字的旧版本节点或是热数据区的节点
+            //都将会从跳表中摘除，跳过该节点，访问该节点next_指针指向的节点
+            while ( (user_key.compare(next_user_key) == 0)
+                || next_seq >= guard_seq ) {
+                next = next->Next(0);
+                next_key = next->key;
+                next_user_key = GetUserKey(next_key);
+                next_seq = GetSeqNumber(next_key);
+            }
+
+            //此时next指向的是一个冷数据区的节点，保留该节点
+            iter_->SetNext(0, next);
+
+            //iter_和next都移动到它们的next_指针指向的节点
+            iter_ = next;
+            next = next->Next(0);
         }
 
     }    
