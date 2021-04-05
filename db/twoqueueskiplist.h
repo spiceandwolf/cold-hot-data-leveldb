@@ -334,20 +334,21 @@ namespace leveldb
             max_height_.store(height, std::memory_order_relaxed);
         }
         
-        //插入skiplist
+        //创建新的节点
         x = NewTwoqueue_Node(key, height, encoded_len);
-        for (int i = 0; i < height; i++) {
-            x->NoBarrier_SetNext(i, prev[i]->NoBarrier_Next(i));
-            prev[i]->SetNext(i, x);
-        }
-       
-        //如果热数据区已满，则先移动出足够的空间
+
+        //新节点一定插入在热数据区
+        //如果新节点插入热数据区后超出阈值，则先移动出足够的空间
+        normal_area_size += x->GetSize();
         if (normal_area_size > option_normal_size) {
             FreezeNodes(x);
         }
 
-        //新节点一定插入在热数据区
-        normal_area_size += x->GetSize();
+        //插入skiplist
+        for (int i = 0; i < height; i++) {
+            x->NoBarrier_SetNext(i, prev[i]->NoBarrier_Next(i));
+            prev[i]->SetNext(i, x);
+        }
 
         //插入2q链表，为cur_node_添加follow_和把x的precede_指向cur_node_
         cur_node_->SetFollow(x);
