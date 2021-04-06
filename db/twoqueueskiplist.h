@@ -41,7 +41,7 @@ namespace leveldb
         //返回热数据区的大小
         size_t GetNormalAreaSize() const { return normal_area_size; }
         //遍历2Q跳表，将热数据区的键值对保存进
-        std::vector<std::pair<Slice, Slice>> Seperate();
+        void Seperate(std::vector<std::pair<Slice, Slice>>& normal_nodes_);
 
     private:
         enum { kMaxHeight = 12};
@@ -367,11 +367,10 @@ namespace leveldb
     //取出seq不小于guardseq的节点,构造键值对放入vector中
     //在2Q链表中摘除这些点及对应的旧版本节点
     template <typename Key, class Comparator>
-    std::vector<std::pair<Slice, Slice>> Twoqueue_SkipList<Key, Comparator>::Seperate() {
+    void Twoqueue_SkipList<Key, Comparator>::Seperate(std::vector<std::pair<Slice, Slice>>& normal_nodes_) {
         Twoqueue_Node* guard = normal_head_;
         Twoqueue_Node* iter_ = normal_head_;
         uint64_t guard_seq = GetSeqNumber(guard->key);
-        std::vector<std::pair<Slice, Slice>> normal_nodes_;
 
         //从normal_head_遍历，构造键值对，将键值对插入vector中
         //同时将该节点的旧版本节点全部摘除

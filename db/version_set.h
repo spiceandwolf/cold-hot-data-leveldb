@@ -33,6 +33,8 @@ class Writer;
 class Compaction;
 class Iterator;
 class MemTable;
+//修改为tqmemtable
+// class TQMemTable;
 class TableBuilder;
 class TableCache;
 class Version;

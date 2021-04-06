@@ -14,22 +14,23 @@ static Slice GetLengthPrefixedSlice(const char* data) {
   return Slice(p, len);
 }
 
-MemTable::MemTable(const InternalKeyComparator& comparator, const size_t& write_buffer_size)
+TQMemTable::TQMemTable(const InternalKeyComparator& comparator, const size_t& write_buffer_size)
     : comparator_(comparator), refs_(0), tqtable_(comparator_, &arena_, write_buffer_size) {}
 
-MemTable::~MemTable() { assert(refs_ == 0); }
+TQMemTable::~TQMemTable() { assert(refs_ == 0); }
 
-size_t MemTable::ApproximateMemoryUsage() { return arena_.MemoryUsage(); }
+size_t TQMemTable::ApproximateMemoryUsage() { return arena_.MemoryUsage(); }
 
-size_t MemTable::ApproximateColdArea() { return tqtable_.GetColdAreaSize(); }
+size_t TQMemTable::ApproximateColdArea() { return tqtable_.GetColdAreaSize(); }
 
-size_t MemTable::ApproximateNormalArea() { return tqtable_.GetNormalAreaSize(); }
+size_t TQMemTable::ApproximateNormalArea() { return tqtable_.GetNormalAreaSize(); }
 
-//
-void CreateNewAndImm(MemTable* newmem) {
+//normal_nodes_中存放热数据区的键值，用于重构包含有热数据的新memtable
+void TQMemTable::CreateNewAndImm(std::vector<std::pair<Slice, Slice>>& normal_nodes_) {
+  tqtable_.Seperate(normal_nodes_);
 }
 
-int MemTable::KeyComparator::operator()(const char* aptr,
+int TQMemTable::KeyComparator::operator()(const char* aptr,
                                         const char* bptr) const {
   // Internal keys are encoded as length-prefixed strings.
   Slice a = GetLengthPrefixedSlice(aptr);
@@ -44,16 +45,16 @@ static const char* EncodeKey(std::string* scratch, const Slice& target) {
   return scratch->data();
 }
 
-class MemTableIterator : public Iterator {
+class TQMemTableIterator : public Iterator {
  public:
 
   //使用2Q跳表
-  explicit MemTableIterator(MemTable::TQTable* table) : iter_(table) {}
+  explicit TQMemTableIterator(TQMemTable::TQTable* table) : iter_(table) {}
 
-  MemTableIterator(const MemTableIterator&) = delete;
-  MemTableIterator& operator=(const MemTableIterator&) = delete;
+  TQMemTableIterator(const TQMemTableIterator&) = delete;
+  TQMemTableIterator& operator=(const TQMemTableIterator&) = delete;
 
-  ~MemTableIterator() override = default;
+  ~TQMemTableIterator() override = default;
 
   bool Valid() const override { return iter_.Valid(); }
   void Seek(const Slice& k) override { iter_.Seek(EncodeKey(&tmp_, k)); }
@@ -71,15 +72,15 @@ class MemTableIterator : public Iterator {
 
  private:
   //2Q跳表
-  MemTable::TQTable::Iterator iter_;
+  TQMemTable::TQTable::Iterator iter_;
 
   std::string tmp_;  // For passing to EncodeKey
 };
 
-Iterator* MemTable::NewIterator() { return new MemTableIterator(&tqtable_); }
+Iterator* TQMemTable::NewIterator() { return new TQMemTableIterator(&tqtable_); }
 
 //最后插入到TwoQueueSkipList中
-void MemTable::Add(SequenceNumber s, ValueType type, const Slice& key,
+void TQMemTable::Add(SequenceNumber s, ValueType type, const Slice& key,
                             const Slice& value) {
   size_t key_size = key.size();
   size_t val_size = value.size();
@@ -99,7 +100,7 @@ void MemTable::Add(SequenceNumber s, ValueType type, const Slice& key,
   tqtable_.Insert(buf, encoded_len);                         
 }
 
-bool MemTable::Get(const LookupKey& key, std::string* value, Status* s) {
+bool TQMemTable::Get(const LookupKey& key, std::string* value, Status* s) {
   Slice memkey = key.memtable_key();
   TQTable::Iterator iter(&tqtable_);
   iter.Seek(memkey.data());

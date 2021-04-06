@@ -19,6 +19,9 @@
 #include "db/log_reader.h"
 #include "db/log_writer.h"
 #include "db/memtable.h"
+
+#include "db/tqmemtable.h"
+
 #include "db/table_cache.h"
 #include "db/version_set.h"
 #include "db/write_batch_internal.h"
@@ -428,7 +431,7 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
   Slice record;
   WriteBatch batch;
   int compactions = 0;
-  MemTable* mem = nullptr;
+  TQMemTable* mem = nullptr;
   while (reader.ReadRecord(&record, &scratch) && status.ok()) {
     if (record.size() < 12) {
       reporter.Corruption(record.size(),
@@ -438,7 +441,7 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
     WriteBatchInternal::SetContents(&batch, record);
 
     if (mem == nullptr) {
-      mem = new MemTable(internal_comparator_);
+      mem = new TQMemTable(internal_comparator_, options_.write_buffer_size);
       mem->Ref();
     }
     status = WriteBatchInternal::InsertInto(&batch, mem);
@@ -484,7 +487,7 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
         mem = nullptr;
       } else {
         // mem can be nullptr if lognum exists but was empty.
-        mem_ = new MemTable(internal_comparator_);
+        mem_ = new TQMemTable(internal_comparator_, options_.write_buffer_size);
         mem_->Ref();
       }
     }
@@ -502,7 +505,8 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
   return status;
 }
 
-Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
+//修改为tqmemtable
+Status DBImpl::WriteLevel0Table(TQMemTable* mem, VersionEdit* edit,
                                 Version* base) {
   mutex_.AssertHeld();
   const uint64_t start_micros = env_->NowMicros();
@@ -1055,10 +1059,11 @@ namespace {
 struct IterState {
   port::Mutex* const mu;
   Version* const version GUARDED_BY(mu);
-  MemTable* const mem GUARDED_BY(mu);
-  MemTable* const imm GUARDED_BY(mu);
+  //修改为tqmemtable
+  TQMemTable* const mem GUARDED_BY(mu);
+  TQMemTable* const imm GUARDED_BY(mu);
 
-  IterState(port::Mutex* mutex, MemTable* mem, MemTable* imm, Version* version)
+  IterState(port::Mutex* mutex, TQMemTable* mem, TQMemTable* imm, Version* version)
       : mu(mutex), version(version), mem(mem), imm(imm) {}
 };
 
@@ -1124,8 +1129,8 @@ Status DBImpl::Get(const ReadOptions& options, const Slice& key,
     snapshot = versions_->LastSequence();
   }
 
-  MemTable* mem = mem_;
-  MemTable* imm = imm_;
+  TQMemTable* mem = mem_;
+  TQMemTable* imm = imm_;
   Version* current = versions_->current();
   mem->Ref();
   if (imm != nullptr) imm->Ref();
@@ -1345,8 +1350,12 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       allow_delay = false;  // Do not delay a single write more than once
       mutex_.Lock();
     } else if (!force &&
-               (mem_->ApproximateMemoryUsage() <= options_.write_buffer_size)) {
+               (mem_->ApproximateMemoryUsage() <= 1.5 * options_.write_buffer_size) &&
+               (mem_->ApproximateColdArea() <= options_.write_buffer_size)) {
       // There is room in current memtable
+      
+      //设定中正常运行时memtable的占用内存的状态
+      
       break;
     } else if (imm_ != nullptr) {
       // We have filled up the current memtable, but the previous
@@ -1373,9 +1382,55 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       logfile_ = lfile;
       logfile_number_ = new_log_number;
       log_ = new log::Writer(lfile);
+
+      //mem_转化为imm_，初始化新的mem_
+      std::vector<std::pair<Slice, Slice>> normal_nodes_;
+      mem_->CreateNewAndImm(normal_nodes_);
+
       imm_ = mem_;
+
       has_imm_.store(true, std::memory_order_release);
-      mem_ = new MemTable(internal_comparator_);
+
+      //初始化新的memtable
+      mem_ = new TQMemTable(internal_comparator_, options_.write_buffer_size);
+      WriteBatch writebatch;
+      //将normal_nodes_中的键值对再次写入mem_
+      //先写入writebatch
+      for (int i = 0; i < normal_nodes_.size(); i++) {
+        std::pair<Slice, Slice> item = normal_nodes_[i];
+        writebatch.Put(item.first, item.second);
+      }
+
+      //将writebarch写入mem_
+      uint64_t last_sequence = versions_->LastSequence();
+      WriteBatchInternal::SetSequence(&writebatch, last_sequence + 1);
+      last_sequence += WriteBatchInternal::Count(&writebatch);
+      //写日志
+      {
+        mutex_.Unlock();
+        Status status = log_->AddRecord(WriteBatchInternal::Contents(&writebatch));
+        bool sync_error = false;
+        if (status.ok() && false) {
+          status = logfile_->Sync();
+          if (!status.ok()) {
+            sync_error = true;
+          }
+        }
+        if (status.ok()) {
+          status = WriteBatchInternal::InsertInto(&writebatch, mem_);
+        }
+        mutex_.Lock();
+        if (sync_error) {
+          // The state of the log file is indeterminate: the log record we
+          //  just added may or may not show up when the DB is re-opened.
+          // So we force the DB into a mode where all future writes fail.
+          RecordBackgroundError(status);
+        } 
+      }
+      if (&writebatch == tmp_batch_) tmp_batch_->Clear();
+
+      versions_->SetLastSequence(last_sequence);
+
       mem_->Ref();
       force = false;  // Do not force another compaction if have room
       MaybeScheduleCompaction();
@@ -1500,7 +1555,7 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
       impl->logfile_ = lfile;
       impl->logfile_number_ = new_log_number;
       impl->log_ = new log::Writer(lfile);
-      impl->mem_ = new MemTable(impl->internal_comparator_);
+      impl->mem_ = new TQMemTable(impl->internal_comparator_, options.write_buffer_size);
       impl->mem_->Ref();
     }
   }

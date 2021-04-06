@@ -30,7 +30,9 @@
 #include "db/filename.h"
 #include "db/log_reader.h"
 #include "db/log_writer.h"
-#include "db/memtable.h"
+// #include "db/memtable.h"
+//修改为tqmemtable
+#include "db/tqmemtable.h"
 #include "db/table_cache.h"
 #include "db/version_edit.h"
 #include "db/write_batch_internal.h"
@@ -177,7 +179,7 @@ class Repairer {
     std::string scratch;
     Slice record;
     WriteBatch batch;
-    MemTable* mem = new MemTable(icmp_);
+    TQMemTable* mem = new TQMemTable(icmp_, options_.write_buffer_size);
     mem->Ref();
     int counter = 0;
     while (reader.ReadRecord(&record, &scratch)) {

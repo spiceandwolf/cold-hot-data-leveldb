@@ -12,18 +12,26 @@ namespace leveldb
 {
 
 class InternalKeyComparator;
-class MemTableIterator;
+class TQMemTableIterator;
 
-class MemTable {
+class TQMemTable {
 
 public:
   //使用2Q跳表的MemTable
-  MemTable(const InternalKeyComparator& comparator, const size_t& write_buffer_size);
+  TQMemTable(const InternalKeyComparator& comparator, const size_t& write_buffer_size);
 
-  MemTable(const MemTable&) = delete;
-  MemTable& operator=(const MemTable&) = delete;
+  TQMemTable(const TQMemTable&) = delete;
+  TQMemTable& operator=(const TQMemTable&) = delete;
   
   void Ref() { ++refs_; }
+
+  void Unref() {
+    --refs_;
+    assert(refs_ >= 0);
+    if (refs_ <= 0) {
+      delete this;
+    }
+  }
 
   size_t ApproximateMemoryUsage();
 
@@ -34,7 +42,7 @@ public:
 
   //分裂原memtable，
   //生成新的包含原热数据区的memtable和冷数据区转变成的imm_memtable
-  void CreateNewAndImm(MemTable* newmem);
+  void CreateNewAndImm(std::vector<std::pair<Slice, Slice>>& normal_nodes_);
 
   Iterator* NewIterator();
 
@@ -45,7 +53,7 @@ public:
   bool Get(const LookupKey& key, std::string* value, Status* s);
 
 private:
-  friend class MemTableIterator;
+  friend class TQMemTableIterator;
   friend class MemTableBackwardIterator;
 
   struct KeyComparator {
@@ -57,7 +65,7 @@ private:
   //使用2Q跳表
   typedef Twoqueue_SkipList<const char*, KeyComparator> TQTable;
 
-  ~MemTable();  // Private since only Unref() should be used to delete it
+  ~TQMemTable();  // Private since only Unref() should be used to delete it
 
   KeyComparator comparator_;
   int refs_;
