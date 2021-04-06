@@ -67,6 +67,8 @@ namespace leveldb
         void FreezeNodes(Twoqueue_Node* node);
         //从2Q跳表中除去老版本
         void ThawNode(Twoqueue_Node* node);
+        //从key中提取slice
+        Slice GetLengthPrefixedSlice(const char* data);
 
         Comparator const compare_;//同skiplist
         Arena* const arena_;//同skiplist
@@ -409,7 +411,9 @@ namespace leveldb
             seq = GetSeqNumber(entry);
         }
 
-        head_ = iter_;
+        Twoqueue_Node* head = const_cast<Twoqueue_Node*>(head_);
+        head = iter_;
+
         Slice user_key = GetUserKey(entry);
         Twoqueue_Node* next = iter_->Next(0);
 
@@ -522,7 +526,15 @@ namespace leveldb
             return false;
         }
     }
-    
+
+    template <typename Key, class Comparator>
+    Slice Twoqueue_SkipList<Key, Comparator>::GetLengthPrefixedSlice(const char* data) {
+        uint32_t len;
+        const char* p = data;
+        p = GetVarint32Ptr(p, p + 5, &len);  // +5: we assume "p" is not corrupted
+        return Slice(p, len);
+    }
+
 } // namespace leveldb
 
 #endif // STORAGE_LEVELDB_DB_Twoqueue_SkipList_H
