@@ -1,13 +1,16 @@
 #include <iostream>
 #include <assert.h>
 #include <string.h>
-#include "leveldb/db.h"
 
-int main(int, char**) {
+#include "leveldb/db.h"
+using namespace leveldb;
+using namespace std;
+
+int main(int argc, char** argv) {
     leveldb::DB* db;
     leveldb::Options options;
     options.create_if_missing = true;
-    leveldb::Status status = leveldb::DB::Open(options, "D:\\workspace\\graduated design\\leveldb\\testdb", &db);
+    leveldb::Status status = leveldb::DB::Open(options, "D:\\workspace\\graduated design\\testdb", &db);
     assert(status.ok());
     for (int i = 0; i < 10; i++) {
         
@@ -20,7 +23,4 @@ int main(int, char**) {
     std::cout<<"v:"<<v2<<std::endl;
  
     delete db;
-
-
-    return 0;
 }

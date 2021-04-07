@@ -294,9 +294,9 @@ namespace leveldb
         normal_head_(head_),
         cold_head_(head_),
         obsolete_(nullptr),
-        cur_scan_node_(head_),
-        cur_node_(normal_head_),
-        cur_cold_node_(cold_head_),
+        cur_scan_node_(nullptr),
+        cur_node_(head_),
+        cur_cold_node_(nullptr),
         max_height_(1), 
         rnd_(0xdeadbeef),
         normal_area_size(0), 
@@ -304,6 +304,7 @@ namespace leveldb
         option_normal_size(write_buffer_size) {
         for (int i = 0; i < kMaxHeight; i++) {
             head_->SetNext(i, nullptr);
+            cold_area_size += head_->GetSize();
         }
     }
     
@@ -356,6 +357,14 @@ namespace leveldb
         cur_node_->SetFollow(x);
         x->SetPrecede(cur_node_);
         x->SetFollow(nullptr);
+
+        //如果normal_head_和cold_head_等于head_，说明插入的是2q跳表中的第一个节点
+        //则让normal_head_，cold_head_指向该节点
+        if (head_ == normal_head_ && cold_head_ == head_) {
+            normal_head_ = x;
+            cold_head_ = x;
+        }
+
         //完成插入后，节点x成为cur_node_
         cur_node_ = x;
 
@@ -401,7 +410,7 @@ namespace leveldb
         //摘除所有冷数据区节点的旧版本节点和热数据区节点
 
         //首先确定head_是从冷数据区开始
-        iter_ = head_;
+        iter_ = head_->Next(0);
         const char* entry = iter_->key;
         uint64_t seq = GetSeqNumber(entry);
 
@@ -411,8 +420,7 @@ namespace leveldb
             seq = GetSeqNumber(entry);
         }
 
-        Twoqueue_Node* head = const_cast<Twoqueue_Node*>(head_);
-        head = iter_;
+        head_->SetNext(0, iter_);
 
         Slice user_key = GetUserKey(entry);
         Twoqueue_Node* next = iter_->Next(0);
@@ -481,20 +489,36 @@ namespace leveldb
         Twoqueue_Node* prev = elder->Precede();
 
         //判断旧版本节点存在于热数据区还是冷数据区
+        //如果elder是最早插入该memtable的，则它的precede_为head_
+        //若elder在热数据区，则normal_head_指向elder->follow_指针指向的数据
+        //若elder在冷数据区，则cold_head_指向elder->follow_指针指向的数据
         uint64_t seq = GetSeqNumber(elder->key);
         uint64_t cur_seq = GetSeqNumber(normal_head_->key);
-        if (seq > cur_seq) {
+        if (seq >= cur_seq) {
             //说明旧版本节点在热数据区
             normal_area_size -= elder->GetSize();
+
+            if (prev == head_) {
+                normal_head_ = elder->Follow();
+                elder->Follow()->SetPrecede(head_);
+            } else {
+                prev->SetFollow(elder->Follow());
+                elder->Follow()->SetPrecede(prev);
+            }
         } else {
             //说明旧版本节点在冷数据区
             cold_area_size -= elder->GetSize();
+
+            if (prev == head_) {
+                cold_head_ = elder->Follow();
+                elder->Follow()->SetPrecede(head_);
+            } else {
+                prev->SetFollow(elder->Follow());
+                elder->Follow()->SetPrecede(prev);
+            }
         }
        
         //将旧版本节点移到废弃区
-        prev->SetFollow(elder->Follow());
-        elder->Follow()->SetPrecede(prev);
-
         elder->SetFollow(obsolete_->Follow());
         obsolete_->SetFollow(elder);
     }
@@ -512,8 +536,8 @@ namespace leveldb
     uint64_t Twoqueue_SkipList<Key, Comparator>::GetSeqNumber(const Key& entry) const {
         uint32_t key_length;
         const char* key_ptr = GetVarint32Ptr(entry, entry + 5, &key_length);
-        Slice key = Slice(key_ptr, key_length);
-        const uint64_t seq = DecodeFixed64(key.data() + key.size() - 8);
+        Slice key = Slice(key_ptr, key_length - 8);
+        const uint64_t seq = DecodeFixed64(key.data() + key.size()) >> 8;
         return seq;
     }
     

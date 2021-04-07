@@ -455,7 +455,7 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
       *max_sequence = last_seq;
     }
 
-    if (mem->ApproximateMemoryUsage() > options_.write_buffer_size) {
+    if (mem->ApproximateColdArea() > options_.write_buffer_size) {
       compactions++;
       *save_manifest = true;
       status = WriteLevel0Table(mem, edit, nullptr);

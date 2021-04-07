@@ -192,7 +192,6 @@ target_sources(leveldb
     "util/options.cc"
     "util/random.h"
     "util/status.cc"
-    "functiontest.cc"
 
   # Only CMake 3.3+ supports PUBLIC sources in targets exported by "install".
   $<$<VERSION_GREATER:CMAKE_VERSION,3.2>:PUBLIC>
@@ -366,7 +365,8 @@ if(LEVELDB_BUILD_TESTS)
     leveldb_test("db/version_edit_test.cc")
     leveldb_test("db/version_set_test.cc")
     # leveldb_test("db/write_batch_test.cc")
-    
+
+    leveldb_test("app/function_test.cc")
 
     leveldb_test("helpers/memenv/memenv_test.cc")
 
