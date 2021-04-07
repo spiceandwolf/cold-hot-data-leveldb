@@ -519,8 +519,8 @@ namespace leveldb
         }
        
         //将旧版本节点移到废弃区
-        elder->SetFollow(obsolete_->Follow());
-        obsolete_->SetFollow(elder);
+        elder->SetFollow(obsolete_);
+        obsolete_ = elder;
     }
 
     //从key中抽取userkey
