@@ -31,8 +31,24 @@ namespace leveldb
         void Insert(const Key& key, const size_t& encoded_len);
         //Contains()函数没有变化
         bool Contains(const Key& key) const;
-        //Iterator已有的功能不需要变化
-
+        
+        //重写Iterator内部类
+        class TQIterator
+        {
+        private:
+            const Twoqueue_SkipList* list_;
+            Twoqueue_Node* node_;
+        public:
+            explicit TQIterator(const Twoqueue_SkipList* list);
+            bool Valid() const;
+            const Key& key() const;
+            void Next();
+            void Prev();
+            void Seek(const Key& target);
+            void SeekToFirst();
+            void SeekToLast();
+        };
+        
         int RandomHeight();
         bool Equal(const Key& a, const Key& b) const { return (compare_(a, b) == 0); }
 
@@ -177,6 +193,59 @@ namespace leveldb
         return new (node_memorey) Twoqueue_Node(key, height, encoded_len);
     }
 
+    //TQIterator
+    template <typename Key, class Comparator>
+    inline Twoqueue_SkipList<Key, Comparator>::TQIterator::TQIterator(const Twoqueue_SkipList* list) {
+        list_ = list;
+        node_ = nullptr;
+    }
+
+    template <typename Key, class Comparator>
+    inline bool Twoqueue_SkipList<Key, Comparator>::TQIterator::Valid() const {
+        return node_ != nullptr;
+    }
+
+    template <typename Key, class Comparator>
+    inline const Key& Twoqueue_SkipList<Key, Comparator>::TQIterator::key() const {
+        assert(Valid());
+        return node_->key;
+    }
+
+    template <typename Key, class Comparator>
+    inline void Twoqueue_SkipList<Key, Comparator>::TQIterator::Next() {
+        assert(Valid());
+        node_ = node_->Next(0);
+    }
+
+    template <typename Key, class Comparator>
+    inline void Twoqueue_SkipList<Key, Comparator>::TQIterator::Prev() {
+        // Instead of using explicit "prev" links, we just search for the
+        // last node that falls before key.
+        assert(Valid());
+        node_ = list_->FindLessThan(node_->key);
+        if (node_ == list_->head_) {
+            node_ = nullptr;
+        }
+    }
+
+    template <typename Key, class Comparator>
+    inline void Twoqueue_SkipList<Key, Comparator>::TQIterator::Seek(const Key& target) {
+        node_ = list_->FindGreaterOrEqual(target, nullptr);
+    }
+
+    template <typename Key, class Comparator>
+        inline void Twoqueue_SkipList<Key, Comparator>::TQIterator::SeekToFirst() {
+        node_ = list_->head_->Next(0);
+    }
+
+    template <typename Key, class Comparator>
+    inline void Twoqueue_SkipList<Key, Comparator>::TQIterator::SeekToLast() {
+        node_ = list_->FindLast();
+        if (node_ == list_->head_) {
+            node_ = nullptr;
+        }
+    }
+
     template <typename Key, class Comparator>
     int Twoqueue_SkipList<Key, Comparator>::RandomHeight() {
         static const unsigned int kBranching = 4;
@@ -262,15 +331,14 @@ namespace leveldb
     typename Twoqueue_SkipList<Key, Comparator>::Twoqueue_Node*
     Twoqueue_SkipList<Key, Comparator>::FindNoSmaller(Twoqueue_Node* node) const {
         Twoqueue_Node* x = node;
-        const char* key = node->key;
 
-        Slice a = GetUserKey(key);
+        Slice a = GetUserKey(node->key);
         Twoqueue_Node* next = x->Next(0);
 
         while (true) {
             if (next != nullptr) {
-                const char* bptr = next->key;
-                Slice b = GetUserKey(bptr);
+                
+                Slice b = GetUserKey(next->key);
                 
                 if (a.compare(b) == 0) {
                     x = next;
@@ -389,11 +457,13 @@ namespace leveldb
             //userkey
             const char* entry = iter_->key;
             uint32_t key_length;
-            const char* key_ptr = GetVarint32Ptr(entry, entry + 5, &key_length);
-            Slice user_key = Slice(key_ptr, key_length - 8);
+            Slice internalKey = GetLengthPrefixedSlice(entry);
+            Slice user_key = Slice(internalKey.data(), internalKey.size() - 8);
+            std::string tmpkey = user_key.data();
 
             //value
-            Slice value = GetLengthPrefixedSlice(key_ptr + key_length);
+            Slice value = GetLengthPrefixedSlice(internalKey.data() + internalKey.size());
+            std::string tmpval = value.data();
 
             //插入vector
             std::pair<Slice, Slice> item(user_key, value);
@@ -411,36 +481,35 @@ namespace leveldb
 
         //首先确定head_是从冷数据区开始
         iter_ = head_->Next(0);
-        const char* entry = iter_->key;
-        uint64_t seq = GetSeqNumber(entry);
+        
+        uint64_t seq = GetSeqNumber(iter_->key);
 
         while (seq >= guard_seq) {
             iter_ = iter_->Next(0);
-            entry = iter_->key;
-            seq = GetSeqNumber(entry);
+            
+            seq = GetSeqNumber(iter_->key);
         }
 
         head_->SetNext(0, iter_);
 
-        Slice user_key = GetUserKey(entry);
+        Slice user_key = GetUserKey(iter_->key);
         Twoqueue_Node* next = iter_->Next(0);
 
         //判断next_指针指向的节点是否为旧版本节点
         //若next为nullptr,则iter_已指向最后一个节点
         while (next != nullptr) {           
             
-            const char* next_key = next->key;
-            Slice next_user_key = GetUserKey(next_key);
-            uint64_t next_seq = GetSeqNumber(next_key);
+            Slice next_user_key = GetUserKey(next->key);
+            uint64_t next_seq = GetSeqNumber(next->key);
 
             //如果next_指针指向的节点是相同关键字的旧版本节点或是热数据区的节点
             //都将会从跳表中摘除，跳过该节点，访问该节点next_指针指向的节点
             while ( (user_key.compare(next_user_key) == 0)
                 || next_seq >= guard_seq ) {
                 next = next->Next(0);
-                next_key = next->key;
-                next_user_key = GetUserKey(next_key);
-                next_seq = GetSeqNumber(next_key);
+                
+                next_user_key = GetUserKey(next->key);
+                next_seq = GetSeqNumber(next->key);
             }
 
             //此时next指向的是一个冷数据区的节点，保留该节点

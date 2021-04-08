@@ -19,6 +19,13 @@ namespace leveldb {
   typedef char* Key;
   const size_t kHeader = 12;
 
+  Slice GetLengthPrefixedSlice(const char* data) {
+        uint32_t len;
+        const char* p = data;
+        p = GetVarint32Ptr(p, p + 5, &len);  // +5: we assume "p" is not corrupted
+        return Slice(p, len);
+    }
+
   struct TestKeyComparator {
 
     const InternalKeyComparator comparator;
@@ -45,16 +52,18 @@ namespace leveldb {
      void FindShortSuccessor(std::string* key) const override {}
   };
 
-  std::string IKey(const std::string& user_key, uint64_t seq,
-                        ValueType vt) {
-    Arena arena_;
-    std::string rep_;
-
+  //返回的string类型在转换成char*的过程中存在bug使二者不能完全相同
+  std::string IKey( Arena& arena_, 
+                        const std::string& user_key, const std::string& user_value, uint64_t seq,
+                        ValueType vt, Twoqueue_SkipList<Key, TestKeyComparator>* table = nullptr) {
     Slice key(user_key);
+    Slice value(user_value);
 
     size_t key_size = key.size();
+    size_t val_size = value.size();
     size_t internal_key_size = key_size + 8;
-    const size_t encoded_len = VarintLength(internal_key_size) + internal_key_size;
+    const size_t encoded_len = VarintLength(internal_key_size) + internal_key_size + VarintLength(val_size) +
+                             val_size;
     
     char* buf = arena_.Allocate(encoded_len);
     char* p = EncodeVarint32(buf, internal_key_size);
@@ -62,18 +71,22 @@ namespace leveldb {
     p += key_size;
     EncodeFixed64(p, (seq << 8) | vt);
     p += 8;
-    assert(p == buf + encoded_len);
+    p = EncodeVarint32(p, val_size);
+    std::memcpy(p, value.data(), val_size);
+    assert(p + val_size == buf + encoded_len);
+
+    if (table != nullptr) table->Insert(buf, encoded_len);
 
     return buf;
   }
 
   TEST(TwoqueueSkipListTest, Iter) {
-    Arena arena;
+    Arena arena1;
     TestComparator tcmp;
     InternalKeyComparator icmp(&tcmp);
     TestKeyComparator cmp(icmp);
 
-    Twoqueue_SkipList<Key, TestKeyComparator> list(cmp, &arena);
+    Twoqueue_SkipList<Key, TestKeyComparator> list(cmp, &arena1, 10000);
     char key[1];
     sprintf(key, "%d", 10);
     ASSERT_TRUE(!list.Contains(key));
@@ -90,48 +103,31 @@ namespace leveldb {
   }
 
   TEST(TwoqueueSkipListTest, InsertAndLookup) {
-    const int N = 2000;
-    const int R = 5000;
-    Random rnd(1000);
-    std::set<std::string> keys;
+   
     Arena arena;
+    
+    std::set<std::string> keys;
     TestComparator tcmp;
     InternalKeyComparator icmp(&tcmp);
     TestKeyComparator cmp(icmp);
-    Twoqueue_SkipList<Key, TestKeyComparator> list(cmp, &arena);
+    Twoqueue_SkipList<Key, TestKeyComparator> list(cmp, &arena, 5000);
+    
 
-    for (uint64_t i = 0; i < 87; i++) {
-      std::string ikey = IKey(std::to_string(i % 10), i + 1, kTypeValue);;
-      if (keys.insert(ikey).second) {
-        char* buf = new char[ikey.size()];
-        strcpy(buf, ikey.c_str());
-        list.Insert(buf);
-      }
-    }
-
-    for (uint64_t i = 88; i < N; i++) {
-      std::string ikey = IKey(std::to_string(i % 10), i + 1, kTypeValue);;
-      if (keys.insert(ikey).second) {
-        char* buf = new char[ikey.size()];
-        strcpy(buf, ikey.c_str());
-        list.Insert(buf);
-      }
-    }
-
-    for (uint64_t i = 0; i < R; i++) {
-      std::string ikey = IKey(std::to_string((i % 1000)), i + 1, kTypeValue);
+    for (uint64_t i = 0; i < 100; i++) {
+    
+      std::string ikey = IKey(arena, std::to_string(i % 10), std::to_string(i), i + 1, kTypeValue, &list);
       size_t size = ikey.size();
       char buf[size];
-      strcpy(buf, ikey.c_str());      
-      if (list.Contains(buf)) {
-        ASSERT_EQ(keys.count(ikey), 1);
-      } else {
-        ASSERT_EQ(keys.count(ikey), 0);
-      }
+      strcpy(buf, ikey.c_str());
+      ASSERT_TRUE(keys.insert(buf).second);
+    
     }
 
-    // for (int i = 2000; i < R; i++) {
-    //   std::string ikey = IKey(NumberToString((i % 1000)), i + 1, kTypeValue);
+    ASSERT_TRUE(list.GetNormalAreaSize() <= 5000);
+    ASSERT_TRUE((list.GetNormalAreaSize() + list.GetColdAreaSize()) < arena.MemoryUsage());
+
+    // for (uint64_t i = 0; i < R; i++) {
+    //   std::string ikey = IKey(std::to_string((i % 1000)), i + 1, kTypeValue);
     //   size_t size = ikey.size();
     //   char buf[size];
     //   strcpy(buf, ikey.c_str());      
@@ -142,32 +138,36 @@ namespace leveldb {
     //   }
     // }
 
-    // // Simple iterator tests
-    // {
-    //   Twoqueue_SkipList<Key, TestKeyComparator>::Iterator iter(&list);
-    //   ASSERT_TRUE(!iter.Valid());
+    // Simple iterator tests
+    {
+      Twoqueue_SkipList<Key, TestKeyComparator>::TQIterator iter(&list);
+      ASSERT_TRUE(!iter.Valid());
 
-    //   std::string ikey = IKey(NumberToString(0), 0, kTypeValue);
-    //   size_t size = ikey.size();
-    //   char buf[size];
-    //   strcpy(buf, ikey.c_str());
-    //   iter.Seek(buf);
-    //   ASSERT_TRUE(iter.Valid());
-    //   ASSERT_EQ(*(keys.begin()), std::string(iter.key()));
+      std::string ikey = IKey(arena, std::to_string(0 % 10), std::to_string(0), 1 + 0, kTypeValue);
 
-    //   iter.SeekToFirst();
-    //   ASSERT_TRUE(iter.Valid());
-    //   ASSERT_EQ(*(keys.begin()), std::string(iter.key()));
+      size_t size = ikey.size();
+      char buf[size];
+      strcpy(buf, ikey.c_str());
 
-    //   iter.SeekToLast();
-    //   ASSERT_TRUE(iter.Valid());
-    //   ASSERT_EQ(*(keys.rbegin()), std::string(iter.key()));
-    // }
+      iter.Seek(buf);
+      ASSERT_TRUE(iter.Valid());
+      ASSERT_EQ(*buf, *(iter.key()));
 
-    // // Forward iteration test
-    // for (int i = 0; i < R; i++) {
-    //   SkipList<Key, TestKeyComparator>::Iterator iter(&list);
-    //   std::string ikey = IKey(NumberToString(i % 1000), i, kTypeValue);
+      iter.SeekToFirst();
+      ASSERT_TRUE(iter.Valid());
+      ikey = IKey(arena, std::to_string(90 % 10), std::to_string(90), 1 + 90, kTypeValue);
+      ASSERT_EQ(ikey, std::string(iter.key()));
+
+      iter.SeekToLast();
+      ASSERT_TRUE(iter.Valid());
+      ikey = IKey(arena, std::to_string(9 % 10), std::to_string(9), 1 + 9, kTypeValue);
+      ASSERT_EQ(ikey, std::string(iter.key()));
+    }
+
+    // Forward iteration test
+    // for (uint64_t i = 9; i < 100; i = i + 10) {
+    //   Twoqueue_SkipList<Key, TestKeyComparator>::TQIterator iter(&list);
+    //   std::string ikey = IKey(arena, std::to_string(i % 10), std::to_string(i), i + 1, kTypeValue);
     //   size_t size = ikey.size();
     //   char buf[size];
     //   strcpy(buf, ikey.c_str());
@@ -176,33 +176,43 @@ namespace leveldb {
 
     //   // Compare against model iterator
     //   std::set<std::string>::iterator model_iter = keys.lower_bound(ikey);
-    //   for (int j = 0; j < 3; j++) {
+    //   for (uint64_t j = 0; j < i / 10 + 1; j++) {
     //     if (model_iter == keys.end()) {
     //       ASSERT_TRUE(!iter.Valid());
     //       break;
     //     } else {
     //       ASSERT_TRUE(iter.Valid());
-    //       ASSERT_EQ(*model_iter, std::string(iter.key()));
-    //       ++model_iter;
+    //       ASSERT_EQ(*(model_iter), std::string(iter.key()));
+    //       model_iter--;
     //       iter.Next();
     //     }
     //   }
     // }
 
-    // // Backward iteration test
+    // Backward iteration test
     // {
-    //   SkipList<Key, TestKeyComparator>::Iterator iter(&list);
+    //   Twoqueue_SkipList<Key, TestKeyComparator>::TQIterator iter(&list);
     //   iter.SeekToLast();
+    //   std::string key = std::string(iter.key());
 
     //   // Compare against model iterator
-    //   for (std::set<std::string>::reverse_iterator model_iter = keys.rbegin();
-    //       model_iter != keys.rend(); ++model_iter) {
+    //   for (std::set<std::string>::iterator model_iter = keys.find(key);
+    //       model_iter != keys.end(); ++model_iter) {
     //     ASSERT_TRUE(iter.Valid());
     //     ASSERT_EQ(*model_iter, std::string(iter.key()));
     //     iter.Prev();
     //   }
-    //   ASSERT_TRUE(!iter.Valid());
+      
     // }
+
+    std::vector<std::pair<Slice, Slice>> normal_nodes_;
+    list.Seperate(normal_nodes_);
+    ASSERT_TRUE(normal_nodes_.size() <= 10);
+    Slice x[10];
+    for (int i = 0; i < normal_nodes_.size(); i++) {
+      x[i] = normal_nodes_[i].first;
+      std::cout<<x[i].data();
+    }
   }
     
 } // namespace leveldb

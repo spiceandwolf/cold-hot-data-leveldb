@@ -72,7 +72,7 @@ class TQMemTableIterator : public Iterator {
 
  private:
   //2Q跳表
-  TQMemTable::TQTable::Iterator iter_;
+  TQMemTable::TQTable::TQIterator iter_;
 
   std::string tmp_;  // For passing to EncodeKey
 };
