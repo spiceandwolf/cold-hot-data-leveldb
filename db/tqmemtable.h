@@ -42,7 +42,8 @@ public:
 
   //分裂原memtable，
   //生成新的包含原热数据区的memtable和冷数据区转变成的imm_memtable
-  void CreateNewAndImm(std::vector<std::pair<Slice, Slice>>& normal_nodes_);
+  //返回值0代表没有冷数据，1代表有冷数据
+  int CreateNewAndImm(std::vector<std::pair<Slice, Slice>>& normal_nodes_);
 
   Iterator* NewIterator();
 

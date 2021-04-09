@@ -206,12 +206,12 @@ namespace leveldb {
     // }
 
     std::vector<std::pair<Slice, Slice>> normal_nodes_;
-    list.Seperate(normal_nodes_);
-    ASSERT_TRUE(normal_nodes_.size() <= 10);
+    int a = list.Seperate(normal_nodes_);
+    ASSERT_TRUE(a == 0);
     Slice x[10];
     for (int i = 0; i < normal_nodes_.size(); i++) {
-      x[i] = normal_nodes_[i].first;
-      std::cout<<x[i].data();
+      std::cout << "key: " << normal_nodes_[i].first.ToString() <<
+                  " value: " << normal_nodes_[i].second.ToString() << std::endl;
     }
   }
     

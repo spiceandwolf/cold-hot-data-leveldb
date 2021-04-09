@@ -57,7 +57,8 @@ namespace leveldb
         //返回热数据区的大小
         size_t GetNormalAreaSize() const { return normal_area_size; }
         //遍历2Q跳表，将热数据区的键值对保存进
-        void Seperate(std::vector<std::pair<Slice, Slice>>& normal_nodes_);
+        //返回0的代表没有冷数据，1代表有
+        int Seperate(std::vector<std::pair<Slice, Slice>>& normal_nodes_);
 
     private:
         enum { kMaxHeight = 12};
@@ -330,14 +331,16 @@ namespace leveldb
     template <typename Key, class Comparator>
     typename Twoqueue_SkipList<Key, Comparator>::Twoqueue_Node*
     Twoqueue_SkipList<Key, Comparator>::FindNoSmaller(Twoqueue_Node* node) const {
-        Twoqueue_Node* x = node;
+        
+        assert(node != nullptr);
 
-        Slice a = GetUserKey(node->key);
+        Twoqueue_Node* x = node;
         Twoqueue_Node* next = x->Next(0);
 
+        Slice a = GetUserKey(node->key);
+
         while (true) {
-            if (next != nullptr) {
-                
+            if (next != nullptr) {  
                 Slice b = GetUserKey(next->key);
                 
                 if (a.compare(b) == 0) {
@@ -346,7 +349,6 @@ namespace leveldb
                 } else {
                     return x;
                 }
-
             } else {
                 return x;
             }
@@ -430,7 +432,6 @@ namespace leveldb
         //则让normal_head_，cold_head_指向该节点
         if (head_ == normal_head_ && cold_head_ == head_) {
             normal_head_ = x;
-            cold_head_ = x;
         }
 
         //完成插入后，节点x成为cur_node_
@@ -446,79 +447,80 @@ namespace leveldb
     //取出seq不小于guardseq的节点,构造键值对放入vector中
     //在2Q链表中摘除这些点及对应的旧版本节点
     template <typename Key, class Comparator>
-    void Twoqueue_SkipList<Key, Comparator>::Seperate(std::vector<std::pair<Slice, Slice>>& normal_nodes_) {
+    int Twoqueue_SkipList<Key, Comparator>::Seperate(std::vector<std::pair<Slice, Slice>>& normal_nodes_) {
         Twoqueue_Node* guard = normal_head_;
         Twoqueue_Node* iter_ = normal_head_;
         uint64_t guard_seq = GetSeqNumber(guard->key);
 
         //从normal_head_遍历，构造键值对，将键值对插入vector中
-        //同时将该节点的旧版本节点全部摘除
         while (iter_ != nullptr) {
             //userkey
             const char* entry = iter_->key;
             uint32_t key_length;
-            Slice internalKey = GetLengthPrefixedSlice(entry);
-            Slice user_key = Slice(internalKey.data(), internalKey.size() - 8);
-            std::string tmpkey = user_key.data();
-
+            Slice userkey = GetUserKey(iter_->key);
+            std::string tmpkey = userkey.ToString();
+            
             //value
-            Slice value = GetLengthPrefixedSlice(internalKey.data() + internalKey.size());
-            std::string tmpval = value.data();
+            Slice value = GetLengthPrefixedSlice(userkey.data() + userkey.size() + 8);
+            std::string tmpval = value.ToString();
 
             //插入vector
-            std::pair<Slice, Slice> item(user_key, value);
+            std::pair<Slice, Slice> item(userkey, value);
             normal_nodes_.push_back(item);
 
-            //摘除旧版本节点
-            Twoqueue_Node* next = FindNoSmaller(iter_);
-            if (next != iter_) {
-                iter_->SetNext(0, next->Next(0));
-            }
+            iter_ = iter_->Follow();
+
         }
 
         //遍历整个skiplist,以normal_head_指向的节点的seq为基准，
-        //摘除所有冷数据区节点的旧版本节点和热数据区节点
+        //摘除所有冷数据区节点的旧版本节点和热数据区节点及其旧版本节点
 
         //首先确定head_是从冷数据区开始
         iter_ = head_->Next(0);
+        Twoqueue_Node* next;
         
         uint64_t seq = GetSeqNumber(iter_->key);
 
         while (seq >= guard_seq) {
-            iter_ = iter_->Next(0);
+
+            next = FindNoSmaller(iter_);
+            iter_ = next->Next(0);
             
+            if (iter_ == nullptr) break;
             seq = GetSeqNumber(iter_->key);
         }
 
         head_->SetNext(0, iter_);
 
+        //可能会出现所有节点的新版本都是热数据的情况
+        //此时没有冷数据
+        if (iter_ == nullptr) {
+            return 0;
+        }
+
         Slice user_key = GetUserKey(iter_->key);
-        Twoqueue_Node* next = iter_->Next(0);
+
+        //next指向下一关键字的最新版本节点
+        next = FindNoSmaller(iter_)->Next(0);
 
         //判断next_指针指向的节点是否为旧版本节点
         //若next为nullptr,则iter_已指向最后一个节点
         while (next != nullptr) {           
             
-            Slice next_user_key = GetUserKey(next->key);
+            //Slice next_user_key = GetUserKey(next->key);
             uint64_t next_seq = GetSeqNumber(next->key);
 
-            //如果next_指针指向的节点是相同关键字的旧版本节点或是热数据区的节点
-            //都将会从跳表中摘除，跳过该节点，访问该节点next_指针指向的节点
-            while ( (user_key.compare(next_user_key) == 0)
-                || next_seq >= guard_seq ) {
-                next = next->Next(0);
-                
-                next_user_key = GetUserKey(next->key);
-                next_seq = GetSeqNumber(next->key);
-            }
-
             //此时next指向的是一个冷数据区的节点，保留该节点
-            iter_->SetNext(0, next);
+            if (next_seq < guard_seq) {
+                iter_->SetNext(0, next);
 
-            //iter_和next都移动到它们的next_指针指向的节点
-            iter_ = next;
-            next = next->Next(0);
+                iter_ = next;
+            }
+            
+            next = FindNoSmaller(iter_)->Next(0);
         }
+
+        return 1;
 
     }    
 
@@ -540,6 +542,9 @@ namespace leveldb
         cur_cold_node_ = selected_node;
         selected_node = selected_node->Follow();
         normal_head_ = selected_node;
+
+        //有数据第一次成为冷数据时再确定cold_head_的值
+        if (cold_head_ == head_) cold_head_ = cur_cold_node_;
 
         //两区域所占空间的变化
         normal_area_size -= total_size;

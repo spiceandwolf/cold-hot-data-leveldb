@@ -455,7 +455,7 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
       *max_sequence = last_seq;
     }
 
-    if (mem->ApproximateColdArea() > options_.write_buffer_size) {
+    if (mem->ApproximateMemoryUsage() > options_.write_buffer_size) {
       compactions++;
       *save_manifest = true;
       status = WriteLevel0Table(mem, edit, nullptr);
@@ -1385,11 +1385,12 @@ Status DBImpl::MakeRoomForWrite(bool force) {
 
       //mem_转化为imm_，初始化新的mem_
       std::vector<std::pair<Slice, Slice>> normal_nodes_;
-      mem_->CreateNewAndImm(normal_nodes_);
+      int has_cold_data = mem_->CreateNewAndImm(normal_nodes_);
 
-      imm_ = mem_;
-
-      has_imm_.store(true, std::memory_order_release);
+      if (has_cold_data == 1) {
+        imm_ = mem_;
+        has_imm_.store(true, std::memory_order_release);
+      }
 
       //初始化新的memtable
       mem_ = new TQMemTable(internal_comparator_, options_.write_buffer_size);
