@@ -1390,10 +1390,13 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       if (has_cold_data == 1) {
         imm_ = mem_;
         has_imm_.store(true, std::memory_order_release);
+      } else if (has_cold_data == 0) {
+        mem_->Unref();
       }
 
       //初始化新的memtable
       mem_ = new TQMemTable(internal_comparator_, options_.write_buffer_size);
+
       WriteBatch writebatch;
       //将normal_nodes_中的键值对再次写入mem_
       //先写入writebatch
@@ -1428,6 +1431,7 @@ Status DBImpl::MakeRoomForWrite(bool force) {
           RecordBackgroundError(status);
         } 
       }
+
       if (&writebatch == tmp_batch_) tmp_batch_->Clear();
 
       versions_->SetLastSequence(last_sequence);
