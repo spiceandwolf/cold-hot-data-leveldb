@@ -103,8 +103,8 @@ namespace leveldb
         Random rnd_;//同skiplist
         size_t normal_area_size;//热数据区所占总空间
         size_t cold_area_size;//冷数据区所占总空间
-        size_t option_normal_size;//Option中设定的memtable的最大值
-        float size_factor;
+        size_t option_normal_size;//热数据区所用空间
+        
     };
     
     template <typename Key, class Comparator>
@@ -372,8 +372,7 @@ namespace leveldb
         rnd_(0xdeadbeef),
         normal_area_size(0), 
         cold_area_size(0),
-        option_normal_size(write_buffer_size),
-        size_factor(0.2) {
+        option_normal_size(write_buffer_size) {
         for (int i = 0; i < kMaxHeight; i++) {
             head_->SetNext(i, nullptr);
             cold_area_size += head_->GetSize();
@@ -415,7 +414,7 @@ namespace leveldb
         //新节点一定插入在热数据区
         //如果新节点插入热数据区后超出阈值，则先移动出足够的空间
         normal_area_size += x->GetSize();
-        if (normal_area_size > option_normal_size * size_factor) {
+        if (normal_area_size > option_normal_size) {
             FreezeNodes(x);
         }
 
@@ -505,7 +504,7 @@ namespace leveldb
         //next指向下一关键字的最新版本节点
         next = FindNoSmaller(iter_)->Next(0);
 
-        //判断next_指针指向的节点是否为旧版本节点
+        //判断next指针指向的节点是否为旧版本节点
         //若next为nullptr,则iter_已指向最后一个节点
         while (next != nullptr) {           
             

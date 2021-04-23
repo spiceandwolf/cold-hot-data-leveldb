@@ -1394,8 +1394,10 @@ Status DBImpl::MakeRoomForWrite(bool force) {
         mem_->Unref();
       }
 
+      float factor;
+
       //初始化新的memtable
-      mem_ = new TQMemTable(internal_comparator_, options_.write_buffer_size);
+      mem_ = new TQMemTable(internal_comparator_, factor * options_.write_buffer_size);
 
       WriteBatch writebatch;
       //将normal_nodes_中的键值对再次写入mem_
