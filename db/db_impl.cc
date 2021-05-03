@@ -1350,8 +1350,7 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       allow_delay = false;  // Do not delay a single write more than once
       mutex_.Lock();
     } else if (!force &&
-               (mem_->ApproximateMemoryUsage() <= 1.5 * options_.write_buffer_size) &&
-               (mem_->ApproximateColdArea() <= options_.write_buffer_size)) {
+               (mem_->ApproximateMemoryUsage() <= options_.write_buffer_size)) {
       // There is room in current memtable
       
       //设定中正常运行时memtable的占用内存的状态
@@ -1394,10 +1393,8 @@ Status DBImpl::MakeRoomForWrite(bool force) {
         mem_->Unref();
       }
 
-      float factor;
-
       //初始化新的memtable
-      mem_ = new TQMemTable(internal_comparator_, factor * options_.write_buffer_size);
+      mem_ = new TQMemTable(internal_comparator_, options_.write_buffer_size);
 
       WriteBatch writebatch;
       //将normal_nodes_中的键值对再次写入mem_

@@ -1048,8 +1048,19 @@ void VersionSet::Finalize(Version* v) {
       // file size is small (perhaps because of a small write-buffer
       // setting, or very high compression ratios, or lots of
       // overwrites/deletions).
-      score = v->files_[level].size() /
-              static_cast<double>(config::kL0_CompactionTrigger);
+
+      //修改L0层打分函数，既根据文件个数又根据所用空间计算
+      const uint64_t level_bytes = TotalFileSize(v->files_[level]);
+
+      //文件个数得分
+      double number_score = v->files_[level].size() / 
+        static_cast<double>(config::kL0_CompactionTrigger);
+
+      //空间得分
+      double size_score = static_cast<double>(level_bytes) / 
+        MaxBytesForLevel(options_, level);
+
+      score = number_score >= size_score ? number_score : size_score;
     } else {
       // Compute the ratio of current size to size limit.
       const uint64_t level_bytes = TotalFileSize(v->files_[level]);

@@ -104,6 +104,7 @@ namespace leveldb
         size_t normal_area_size;//热数据区所占总空间
         size_t cold_area_size;//冷数据区所占总空间
         size_t option_normal_size;//热数据区所用空间
+        float factor = 0.2;//热数据区所占比例
         
     };
     
@@ -371,8 +372,8 @@ namespace leveldb
         max_height_(1), 
         rnd_(0xdeadbeef),
         normal_area_size(0), 
-        cold_area_size(0),
-        option_normal_size(write_buffer_size) {
+        cold_area_size(0) {
+        option_normal_size = factor * write_buffer_size;
         for (int i = 0; i < kMaxHeight; i++) {
             head_->SetNext(i, nullptr);
             cold_area_size += head_->GetSize();
