@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cmath>
 
 #include "db/filename.h"
 #include "db/log_reader.h"
@@ -1053,8 +1054,8 @@ void VersionSet::Finalize(Version* v) {
       const uint64_t level_bytes = TotalFileSize(v->files_[level]);
 
       //文件个数得分
-      double number_score = v->files_[level].size() / 
-        static_cast<double>(config::kL0_CompactionTrigger);
+      double number_score = pow(v->files_[level].size() / 
+        static_cast<double>(config::kL0_CompactionTrigger), 2) / 2;
 
       //空间得分
       double size_score = static_cast<double>(level_bytes) / 
