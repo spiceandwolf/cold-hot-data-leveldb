@@ -1058,7 +1058,7 @@ void VersionSet::Finalize(Version* v) {
         static_cast<double>(config::kL0_CompactionTrigger), 2) / 2;
 
       //空间得分
-      double size_score = static_cast<double>(level_bytes) / 
+      double size_score = 2 * static_cast<double>(level_bytes) / 
         MaxBytesForLevel(options_, level);
 
       score = number_score >= size_score ? number_score : size_score;
