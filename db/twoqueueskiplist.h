@@ -15,8 +15,7 @@ namespace leveldb
     class Arena;
 
     template<typename Key, class Comparator>
-    class Twoqueue_SkipList : public SkipList<Key, Comparator>
-    {
+    class Twoqueue_SkipList {
     private:
         /* data */
         struct Twoqueue_Node;//2qskiplist下的节点
@@ -47,6 +46,10 @@ namespace leveldb
             void Seek(const Key& target);
             void SeekToFirst();
             void SeekToLast();
+            void Newer();
+            void Older();
+            void SeekToNormalHead();
+            size_t GetDataSize();
         };
         
         int RandomHeight();
@@ -110,19 +113,24 @@ namespace leveldb
     
     template <typename Key, class Comparator>
     struct Twoqueue_SkipList<Key, Comparator>::Twoqueue_Node {
-        /* data */
-        explicit Twoqueue_Node(const Key& k, const int& h, const size_t& encoded_len) : 
+        
+        Twoqueue_Node(const Key& k, const int& h, const size_t& encoded_len) : 
             key(k), 
             follow_(nullptr), 
-            precede_(nullptr) {
+            precede_(nullptr),
+            data_size(encoded_len) {
                 node_size = sizeof(Twoqueue_Node) + sizeof(std::atomic<Twoqueue_Node*>) * (h - 1)
                     + encoded_len;
-            }
+        }
 
         Key const key;
 
         size_t GetSize() {
             return node_size;
+        }
+
+        size_t GetDataSize() {
+            return data_size;
         }
 
         //确保线程安全的方法
@@ -181,6 +189,7 @@ namespace leveldb
 
     private:
         size_t node_size;//占有的层数
+        size_t data_size;//所存键值对的大小
         std::atomic<Twoqueue_Node*> follow_;//在2q中FIFO顺序的下一值
         std::atomic<Twoqueue_Node*> precede_;//在2q中FIFO顺序的前一值
         std::atomic<Twoqueue_Node*> next_[1];//在skiplist中的下一个
@@ -237,7 +246,7 @@ namespace leveldb
     }
 
     template <typename Key, class Comparator>
-        inline void Twoqueue_SkipList<Key, Comparator>::TQIterator::SeekToFirst() {
+    inline void Twoqueue_SkipList<Key, Comparator>::TQIterator::SeekToFirst() {
         node_ = list_->head_->Next(0);
     }
 
@@ -248,6 +257,29 @@ namespace leveldb
             node_ = nullptr;
         }
     }
+
+    template <typename Key, class Comparator>
+    inline void Twoqueue_SkipList<Key, Comparator>::TQIterator::Newer() {
+        assert(Valid());
+        node_ = node_->Precede();
+    }
+
+    template <typename Key, class Comparator>
+    inline void Twoqueue_SkipList<Key, Comparator>::TQIterator::Older() {
+        assert(Valid());
+        node_ = node_->Follow();
+    }    
+
+    template <typename Key, class Comparator>
+    inline void Twoqueue_SkipList<Key, Comparator>::TQIterator::SeekToNormalHead() {
+        node_ = list_->normal_head_;
+    }
+
+    template <typename Key, class Comparator>
+    inline size_t Twoqueue_SkipList<Key, Comparator>::TQIterator::GetDataSize() {
+        assert(Valid());
+        return node_->GetDataSize();
+    }    
 
     template <typename Key, class Comparator>
     int Twoqueue_SkipList<Key, Comparator>::RandomHeight() {
@@ -359,7 +391,7 @@ namespace leveldb
 
     template <typename Key, class Comparator>
     Twoqueue_SkipList<Key, Comparator>::Twoqueue_SkipList(Comparator cmp, Arena* arena,
-     const size_t& write_buffer_size) : SkipList<Key, Comparator>(cmp, arena), 
+     const size_t& write_buffer_size) :
         compare_(cmp),
         arena_(arena),
         head_(NewTwoqueue_Node(0, kMaxHeight, 0)),

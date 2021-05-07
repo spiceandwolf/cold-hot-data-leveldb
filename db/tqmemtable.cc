@@ -19,6 +19,19 @@ TQMemTable::TQMemTable(const InternalKeyComparator& comparator, const size_t& wr
 
 TQMemTable::~TQMemTable() { assert(refs_ == 0); }
 
+//利用当前使用的MemTable的迭代器将热数据复制到这一MemTable中
+int TQMemTable::Substitute(TQMemTableIterator* iter) {
+  iter->SeekToNormalHead();
+  while (iter->Valid()) {
+    const char* entry = iter->Get();
+    const size_t encoded_len = iter->GetDataSize();
+    char* buf = arena_.Allocate(encoded_len);
+    strcpy(buf, entry);
+    tqtable_.Insert(buf, encoded_len);
+    iter->Newer();
+  }
+}
+
 size_t TQMemTable::ApproximateMemoryUsage() { return arena_.MemoryUsage(); }
 
 size_t TQMemTable::ApproximateColdArea() { return tqtable_.GetColdAreaSize(); }
@@ -67,6 +80,11 @@ class TQMemTableIterator : public Iterator {
     Slice key_slice = GetLengthPrefixedSlice(iter_.key());
     return GetLengthPrefixedSlice(key_slice.data() + key_slice.size());
   }
+  char* Get() const { iter_.key(); }
+  void Newer() { iter_.Newer(); }
+  void Older() { iter_.Older(); }
+  void SeekToNormalHead() { iter_.SeekToNormalHead(); }
+  size_t GetDataSize() { iter_.GetDataSize(); }
 
   Status status() const override { return Status::OK(); }
 
@@ -78,6 +96,9 @@ class TQMemTableIterator : public Iterator {
 };
 
 Iterator* TQMemTable::NewIterator() { return new TQMemTableIterator(&tqtable_); }
+TQMemTableIterator* TQMemTable::GetTQMemTableIterator() {
+  return new TQMemTableIterator(&tqtable_);
+}
 
 //最后插入到TwoQueueSkipList中
 void TQMemTable::Add(SequenceNumber s, ValueType type, const Slice& key,

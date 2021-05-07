@@ -22,6 +22,9 @@ public:
 
   TQMemTable(const TQMemTable&) = delete;
   TQMemTable& operator=(const TQMemTable&) = delete;
+
+  //通过迭代器生成新的MemTable
+  int Substitute(TQMemTableIterator* iter);
   
   void Ref() { ++refs_; }
 
@@ -46,6 +49,7 @@ public:
   int CreateNewAndImm(std::vector<std::pair<Slice, Slice>>& normal_nodes_);
 
   Iterator* NewIterator();
+  TQMemTableIterator* GetTQMemTableIterator();
 
   //将一个entry添加到memtable的TwoQueueSkipList中，功能同Add()
   void Add(SequenceNumber seq, ValueType type, const Slice& key,
