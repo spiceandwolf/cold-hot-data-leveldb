@@ -61,7 +61,7 @@ namespace leveldb
         size_t GetNormalAreaSize() const { return normal_area_size; }
         //遍历2Q跳表，将热数据区的键值对保存进
         //返回0的代表没有冷数据，1代表有
-        int Seperate(std::vector<std::pair<Slice, Slice>>& normal_nodes_);
+        int Seperate();
 
     private:
         enum { kMaxHeight = 12};
@@ -477,38 +477,15 @@ namespace leveldb
         }
     }
 
-    //以normal_head_指向的节点的seq为基准
-    //取出seq不小于guardseq的节点,构造键值对放入vector中
-    //在2Q链表中摘除这些点及对应的旧版本节点
+    //以normal_head_指向的节点的seq为基准判断冷热数据
+    //在跳表的最底层中
+    //摘除所有冷数据区节点的旧版本节点和热数据区节点及其旧版本节点
     template <typename Key, class Comparator>
-    int Twoqueue_SkipList<Key, Comparator>::Seperate(std::vector<std::pair<Slice, Slice>>& normal_nodes_) {
+    int Twoqueue_SkipList<Key, Comparator>::Seperate() {
         Twoqueue_Node* guard = normal_head_;
         Twoqueue_Node* iter_ = normal_head_;
         uint64_t guard_seq = GetSeqNumber(guard->key);
-
-        //从normal_head_遍历，构造键值对，将键值对插入vector中
-        while (iter_ != nullptr) {
-            //userkey
-            const char* entry = iter_->key;
-            uint32_t key_length;
-            Slice userkey = GetUserKey(iter_->key);
-            std::string tmpkey = userkey.ToString();
-            
-            //value
-            Slice value = GetLengthPrefixedSlice(userkey.data() + userkey.size() + 8);
-            std::string tmpval = value.ToString();
-
-            //插入vector
-            std::pair<Slice, Slice> item(userkey, value);
-            normal_nodes_.push_back(item);
-
-            iter_ = iter_->Follow();
-
-        }
-
-        //遍历整个skiplist,以normal_head_指向的节点的seq为基准，
-        //摘除所有冷数据区节点的旧版本节点和热数据区节点及其旧版本节点
-
+        
         //首先确定head_是从冷数据区开始
         iter_ = head_->Next(0);
         Twoqueue_Node* next;

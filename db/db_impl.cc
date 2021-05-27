@@ -1383,8 +1383,7 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       log_ = new log::Writer(lfile);
 
       //mem_转化为imm_，初始化新的mem_
-      std::vector<std::pair<Slice, Slice>> normal_nodes_;
-      int has_cold_data = mem_->CreateNewAndImm(normal_nodes_);
+      int has_cold_data = mem_->CreateNewAndImm();
 
       if (has_cold_data == 1) {
         imm_ = mem_;
@@ -1399,45 +1398,6 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       //将normal_nodes_中的键值对再次写入mem_ v2.0
       TQMemTableIterator* iter = imm_->GetTQMemTableIterator();
       mem_->Substitute(iter);
-
-      // WriteBatch writebatch;
-      // //将normal_nodes_中的键值对再次写入mem_ v1.0
-      // //先写入writebatch
-      // for (int i = 0; i < normal_nodes_.size(); i++) {
-      //   std::pair<Slice, Slice> item = normal_nodes_[i];
-      //   writebatch.Put(item.first, item.second);
-      // }
-
-      // //将writebarch写入mem_
-      // uint64_t last_sequence = versions_->LastSequence();
-      // WriteBatchInternal::SetSequence(&writebatch, last_sequence + 1);
-      // last_sequence += WriteBatchInternal::Count(&writebatch);
-      // //写日志
-      // {
-      //   mutex_.Unlock();
-      //   Status status = log_->AddRecord(WriteBatchInternal::Contents(&writebatch));
-      //   bool sync_error = false;
-      //   if (status.ok() && false) {
-      //     status = logfile_->Sync();
-      //     if (!status.ok()) {
-      //       sync_error = true;
-      //     }
-      //   }
-      //   if (status.ok()) {
-      //     status = WriteBatchInternal::InsertInto(&writebatch, mem_);
-      //   }
-      //   mutex_.Lock();
-      //   if (sync_error) {
-      //     // The state of the log file is indeterminate: the log record we
-      //     //  just added may or may not show up when the DB is re-opened.
-      //     // So we force the DB into a mode where all future writes fail.
-      //     RecordBackgroundError(status);
-      //   } 
-      // }
-
-      // if (&writebatch == tmp_batch_) tmp_batch_->Clear();
-
-      // versions_->SetLastSequence(last_sequence);
 
       mem_->Ref();
       force = false;  // Do not force another compaction if have room

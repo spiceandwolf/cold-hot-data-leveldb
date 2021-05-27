@@ -39,8 +39,8 @@ size_t TQMemTable::ApproximateColdArea() { return tqtable_.GetColdAreaSize(); }
 size_t TQMemTable::ApproximateNormalArea() { return tqtable_.GetNormalAreaSize(); }
 
 //normal_nodes_中存放热数据区的键值，用于重构包含有热数据的新memtable
-int TQMemTable::CreateNewAndImm(std::vector<std::pair<Slice, Slice>>& normal_nodes_) {
-  return tqtable_.Seperate(normal_nodes_);
+int TQMemTable::CreateNewAndImm() {
+  return tqtable_.Seperate();
 }
 
 int TQMemTable::KeyComparator::operator()(const char* aptr,
