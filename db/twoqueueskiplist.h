@@ -261,13 +261,13 @@ namespace leveldb
     template <typename Key, class Comparator>
     inline void Twoqueue_SkipList<Key, Comparator>::TQIterator::Newer() {
         assert(Valid());
-        node_ = node_->Precede();
+        node_ = node_->Follow();
     }
 
     template <typename Key, class Comparator>
     inline void Twoqueue_SkipList<Key, Comparator>::TQIterator::Older() {
         assert(Valid());
-        node_ = node_->Follow();
+        node_ = node_->Precede();
     }    
 
     template <typename Key, class Comparator>
