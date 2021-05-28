@@ -73,7 +73,7 @@ class TQMemTableIterator : public Iterator {
   void Newer() { iter_.Newer(); }
   void Older() { iter_.Older(); }
   void SeekToNormalHead() { iter_.SeekToNormalHead(); }
-  size_t GetDataSize() { iter_.GetDataSize(); }
+  size_t GetDataSize() { return iter_.GetDataSize(); }
 
   Status status() const override { return Status::OK(); }
 
