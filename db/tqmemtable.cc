@@ -20,7 +20,7 @@ TQMemTable::TQMemTable(const InternalKeyComparator& comparator, const size_t& wr
 TQMemTable::~TQMemTable() { assert(refs_ == 0); }
 
 //利用当前使用的MemTable的迭代器将热数据复制到这一MemTable中
-int TQMemTable::Substitute(TQMemTableIterator* iter) {
+void TQMemTable::Substitute(TQMemTableIterator* iter) {
   iter->SeekToNormalHead();
   while (iter->Valid()) {
     const char* entry = iter->Get();

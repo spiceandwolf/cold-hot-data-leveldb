@@ -24,7 +24,7 @@ public:
   TQMemTable& operator=(const TQMemTable&) = delete;
 
   //通过迭代器生成新的MemTable
-  int Substitute(TQMemTableIterator* iter);
+  void Substitute(TQMemTableIterator* iter);
   
   void Ref() { ++refs_; }
 
