@@ -4,6 +4,7 @@
 #include "leveldb/env.h"
 #include "leveldb/iterator.h"
 #include "util/coding.h"
+#include <iostream>
 
 namespace leveldb {
 
@@ -96,7 +97,13 @@ void TQMemTable::Substitute(TQMemTableIterator* iter) {
     const char* entry = iter->Get();
     const size_t encoded_len = iter->GetDataSize();
     char* buf = arena_.Allocate(encoded_len);
-    strcpy(buf, entry);
+    std::memcpy(buf, entry, encoded_len);
+
+    // uint32_t key_length;
+    // const char* key_ptr = GetVarint32Ptr(entry, entry + 5, &key_length);
+    // Slice v = GetLengthPrefixedSlice(key_ptr + key_length);
+    // std::cout << v.ToString() << " : value length = " << v.size() << " : encoded_len = " << encoded_len << std::endl;
+
     tqtable_.Insert(buf, encoded_len);
     iter->Newer();
   }

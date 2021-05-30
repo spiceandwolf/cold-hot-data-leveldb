@@ -17,17 +17,18 @@ int main(int argc, char** argv) {
     for(int i = 0; i < 1024; i++) val += "a";
     
     //这段代码注释掉后运行的是从本地文件恢复数据库的过程
-    for (int i = 0; i < 4000; i++) {
-        
+    for (int i = 0; i < 1000000; i++) {  
+
         status = db->Put(leveldb::WriteOptions(), "No." + std::to_string(i % 20000) + "'s key",
-         "No." + std::to_string(i % 20000) + "'s value is " + /*std::to_string(i)*/ val);
-        assert(status.ok());
+            "No." + std::to_string(i % 20000) + "'s value is " + std::to_string(i) /*val*/);
+        assert(status.ok()); 
+        //std::cout<<"No." + std::to_string(i % 20000) + "'s value is " + std::to_string(i) << std::endl;
     }
 
     std::string v2;
     status = db->Get(leveldb::ReadOptions(),"No.0's key", &v2);
     assert(status.ok());
-    std::cout<<"the value is : "<<v2<<std::endl;
+    std::cout<< v2 << std::endl;
  
     delete db;
 }

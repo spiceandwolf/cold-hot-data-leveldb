@@ -1385,19 +1385,27 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       //mem_转化为imm_，初始化新的mem_
       int has_cold_data = mem_->CreateNewAndImm();
 
-      if (has_cold_data == 1) {
-        imm_ = mem_;
-        has_imm_.store(true, std::memory_order_release);
-      } else if (has_cold_data == 0) {
-        mem_->Unref();
-      }
+      TQMemTable* tmp_mem_ = mem_;
 
       //初始化新的memtable
       mem_ = new TQMemTable(internal_comparator_, options_.write_buffer_size);
 
       //将normal_nodes_中的键值对再次写入mem_ v2.0
-      TQMemTableIterator* iter = imm_->GetTQMemTableIterator();
+      TQMemTableIterator* iter = tmp_mem_->GetTQMemTableIterator();
+
       mem_->Substitute(iter);
+
+      //没有冷数据则imm_不用被写入磁盘
+      if (has_cold_data == 1) {
+        imm_ = tmp_mem_;
+        has_imm_.store(true, std::memory_order_release);
+        tmp_mem_ = nullptr;
+      } else if (has_cold_data == 0) {
+        tmp_mem_->Unref();
+        tmp_mem_ = nullptr;
+      }
+
+      delete iter;
 
       mem_->Ref();
       force = false;  // Do not force another compaction if have room
