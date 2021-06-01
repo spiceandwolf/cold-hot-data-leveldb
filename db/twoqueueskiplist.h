@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <vector>
 #include <utility>
+#include <iostream>
 
 #include "db/skiplist.h"
 #include "db/dbformat.h"
@@ -120,7 +121,7 @@ namespace leveldb
             precede_(nullptr),
             data_size(encoded_len) {
                 node_size = sizeof(Twoqueue_Node) + sizeof(std::atomic<Twoqueue_Node*>) * (h - 1)
-                    + encoded_len;
+                    + encoded_len;               
         }
 
         Key const key;
@@ -188,7 +189,7 @@ namespace leveldb
         }
 
     private:
-        size_t node_size;//占有的层数
+        size_t node_size;//在跳表中对应节点的大小
         size_t data_size;//所存键值对的大小
         std::atomic<Twoqueue_Node*> follow_;//在2q中FIFO顺序的下一值
         std::atomic<Twoqueue_Node*> precede_;//在2q中FIFO顺序的前一值
@@ -545,14 +546,18 @@ namespace leveldb
         size_t wanted_size = node->GetSize();
         size_t total_size = selected_node->GetSize();
 
-        while (wanted_size >= total_size) {
+        //考虑特殊情况：已有正常区中的所有数据所占空间之和比新插入数据的所占空间小
+        while (wanted_size >= total_size && selected_node->Follow() != nullptr) {
             selected_node = selected_node->Follow();
             total_size += selected_node->GetSize();
         }
-
-        cur_cold_node_ = selected_node;
-        selected_node = selected_node->Follow();
+       
+        if (selected_node->Follow() != nullptr)
+            selected_node = selected_node->Follow();
+        else 
+            total_size -= selected_node->GetSize();
         normal_head_ = selected_node;
+        cur_cold_node_ = normal_head_->Precede();
 
         //有数据第一次成为冷数据时再确定cold_head_的值
         if (cold_head_ == head_) cold_head_ = cur_cold_node_;

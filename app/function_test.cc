@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
     }
 
     std::string v2;
-    status = db->Get(leveldb::ReadOptions(),"No.0's key", &v2);
+    status = db->Get(leveldb::ReadOptions(),"No.1's key", &v2);
     assert(status.ok());
     std::cout<< v2 << std::endl;
  
