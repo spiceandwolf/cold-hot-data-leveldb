@@ -796,7 +796,7 @@ class Benchmark {
       std::snprintf(msg, sizeof(msg), "(%d ops)", num_);
       thread->stats.AddMessage(msg);
     }
-
+    
     RandomGenerator gen;
     WriteBatch batch;
     Status s;
@@ -806,7 +806,7 @@ class Benchmark {
       batch.Clear();
       for (int j = 0; j < entries_per_batch_; j++) {
         const int k = seq ? i + j : thread->rand.Uniform(FLAGS_num);
-        key.Set(k);
+        key.Set(k); std::cout << k << std::endl;
         batch.Put(key.slice(), gen.Generate(value_size_));
         bytes += value_size_ + key.slice().size();
         thread->stats.FinishedSingleOp();
@@ -850,12 +850,13 @@ class Benchmark {
     ReadOptions options;
     std::string value;
     int found = 0;
-    KeyBuffer key;
+    KeyBuffer key; std::cout << "start read random" << std::endl;
+  
     for (int i = 0; i < reads_; i++) {
-      const int k = thread->rand.Uniform(FLAGS_num);
+      const int k = thread->rand.Uniform(FLAGS_num); std::cout << k << std::endl;
       key.Set(k);
       if (db_->Get(options, key.slice(), &value).ok()) {
-        found++;
+        found++; 
       }
       thread->stats.FinishedSingleOp();
     }

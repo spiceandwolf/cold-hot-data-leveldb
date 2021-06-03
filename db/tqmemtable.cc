@@ -99,11 +99,6 @@ void TQMemTable::Substitute(TQMemTableIterator* iter) {
     char* buf = arena_.Allocate(encoded_len);
     std::memcpy(buf, entry, encoded_len);
 
-    // uint32_t key_length;
-    // const char* key_ptr = GetVarint32Ptr(entry, entry + 5, &key_length);
-    // Slice v = GetLengthPrefixedSlice(key_ptr + key_length);
-    // std::cout << v.ToString() << " : value length = " << v.size() << " : encoded_len = " << encoded_len << std::endl;
-
     tqtable_.Insert(buf, encoded_len);
     iter->Newer();
   }

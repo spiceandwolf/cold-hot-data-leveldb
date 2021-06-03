@@ -126,6 +126,7 @@ namespace leveldb
 
         Key const key;
 
+        //获得该节点的具体大小
         size_t GetSize() {
             return node_size;
         }
@@ -409,8 +410,8 @@ namespace leveldb
         option_normal_size = factor * write_buffer_size;
         for (int i = 0; i < kMaxHeight; i++) {
             head_->SetNext(i, nullptr);
-            cold_area_size += head_->GetSize();
         }
+        normal_area_size += head_->GetSize();
     }
     
     template <typename Key, class Comparator>
@@ -545,7 +546,7 @@ namespace leveldb
         Twoqueue_Node* selected_node = normal_head_;
         size_t wanted_size = node->GetSize();
         size_t total_size = selected_node->GetSize();
-
+        
         //考虑特殊情况：已有正常区中的所有数据所占空间之和比新插入数据的所占空间小
         while (wanted_size >= total_size && selected_node->Follow() != nullptr) {
             selected_node = selected_node->Follow();
