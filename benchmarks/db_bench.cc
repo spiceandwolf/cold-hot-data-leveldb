@@ -789,7 +789,7 @@ class Benchmark {
   void WriteSeq(ThreadState* thread) { DoWrite(thread, true); }
 
   void WriteRandom(ThreadState* thread) { DoWrite(thread, false); }
-
+  
   void DoWrite(ThreadState* thread, bool seq) {
     if (num_ != FLAGS_num) {
       char msg[100];
@@ -801,14 +801,14 @@ class Benchmark {
     WriteBatch batch;
     Status s;
     int64_t bytes = 0;
-    KeyBuffer key;
+    KeyBuffer key; 
     for (int i = 0; i < num_; i += entries_per_batch_) {
       batch.Clear();
       for (int j = 0; j < entries_per_batch_; j++) {
         const int k = seq ? i + j : thread->rand.Uniform(FLAGS_num);
-        key.Set(k); std::cout << k << std::endl;
+        key.Set(k);
         batch.Put(key.slice(), gen.Generate(value_size_));
-        bytes += value_size_ + key.slice().size();
+        bytes += value_size_ + key.slice().size(); 
         thread->stats.FinishedSingleOp();
       }
       s = db_->Write(write_options_, &batch);
@@ -816,7 +816,7 @@ class Benchmark {
         std::fprintf(stderr, "put error: %s\n", s.ToString().c_str());
         std::exit(1);
       }
-    }
+    } 
     thread->stats.AddBytes(bytes);
   }
 
@@ -850,16 +850,16 @@ class Benchmark {
     ReadOptions options;
     std::string value;
     int found = 0;
-    KeyBuffer key; std::cout << "start read random" << std::endl;
+    KeyBuffer key;
   
     for (int i = 0; i < reads_; i++) {
-      const int k = thread->rand.Uniform(FLAGS_num); std::cout << k << std::endl;
+      const int k = thread->rand.Uniform(FLAGS_num);
       key.Set(k);
       if (db_->Get(options, key.slice(), &value).ok()) {
         found++; 
-      }
+      } 
       thread->stats.FinishedSingleOp();
-    }
+    }  
     char msg[100];
     std::snprintf(msg, sizeof(msg), "(%d of %d found)", found, num_);
     thread->stats.AddMessage(msg);

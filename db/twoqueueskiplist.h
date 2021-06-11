@@ -464,9 +464,9 @@ namespace leveldb
         x->SetPrecede(cur_node_);
         x->SetFollow(nullptr);
 
-        //如果normal_head_和cold_head_等于head_，说明插入的是2q跳表中的第一个节点
-        //则让normal_head_，cold_head_指向该节点
-        if (head_ == normal_head_ && cold_head_ == head_) {
+        //如果normal_head_等于head_，说明插入的是2q跳表中的第一个节点
+        //则让normal_head_指向该节点
+        if (head_ == normal_head_) {
             normal_head_ = x;
         }
 
@@ -511,16 +511,13 @@ namespace leveldb
             return 0;
         }
 
-        Slice user_key = GetUserKey(iter_->key);
-
         //next指向下一关键字的最新版本节点
         next = FindNoSmaller(iter_)->Next(0);
 
-        //判断next指针指向的节点是否为旧版本节点
-        //若next为nullptr,则iter_已指向最后一个节点
+        //判断next指针指向的节点是否为冷数据节点
+        //若next为nullptr,则iter_已指向最后一个关键字的最新节点
         while (next != nullptr) {           
             
-            //Slice next_user_key = GetUserKey(next->key);
             uint64_t next_seq = GetSeqNumber(next->key);
 
             //此时next指向的是一个冷数据区的节点，保留该节点
@@ -532,6 +529,8 @@ namespace leveldb
             
             next = FindNoSmaller(next)->Next(0);
         }
+
+        iter_->SetNext(0, next);
 
         return 1;
 
@@ -558,17 +557,14 @@ namespace leveldb
         else 
             total_size -= selected_node->GetSize();
         normal_head_ = selected_node;
-        cur_cold_node_ = normal_head_->Precede();
-
-        //有数据第一次成为冷数据时再确定cold_head_的值
-        if (cold_head_ == head_) cold_head_ = cur_cold_node_;
-
+        // cur_cold_node_ = normal_head_->Precede();
+        
         //两区域所占空间的变化
         normal_area_size -= total_size;
         cold_area_size += total_size;
     }
 
-    //找到旧版本节点，将旧版本节点从FIFO链表中摘除
+    //找到旧版本节点，将旧版本节点elder从FIFO链表中摘除
     //在FIFO链表中旧版本节点的前一节点follow_指针指向旧版本节点的后一节点，
     //旧版本节点的后一节点的precede_指针指向前一节点
     //用旧版本节点的follow_指针指向obsolete_的follow_所指向的节点，
@@ -580,34 +576,24 @@ namespace leveldb
         Twoqueue_Node* prev = elder->Precede();
 
         //判断旧版本节点存在于热数据区还是冷数据区
-        //如果elder是最早插入该memtable的，则它的precede_为head_
-        //若elder在热数据区，则normal_head_指向elder->follow_指针指向的数据
-        //若elder在冷数据区，则cold_head_指向elder->follow_指针指向的数据
+        //对应区域的所占空间应减去elder所占空间的大小
+        //若elder在热数据区，且为normal_head_，normal_head_指向elder->follow_指针指向的数据
         uint64_t seq = GetSeqNumber(elder->key);
         uint64_t cur_seq = GetSeqNumber(normal_head_->key);
         if (seq >= cur_seq) {
             //说明旧版本节点在热数据区
             normal_area_size -= elder->GetSize();
 
-            if (prev == head_) {
+            if (prev == normal_head_) {
                 normal_head_ = elder->Follow();
-                elder->Follow()->SetPrecede(head_);
-            } else {
-                prev->SetFollow(elder->Follow());
-                elder->Follow()->SetPrecede(prev);
-            }
+            } 
         } else {
             //说明旧版本节点在冷数据区
             cold_area_size -= elder->GetSize();
-
-            if (prev == head_) {
-                cold_head_ = elder->Follow();
-                elder->Follow()->SetPrecede(head_);
-            } else {
-                prev->SetFollow(elder->Follow());
-                elder->Follow()->SetPrecede(prev);
-            }
         }
+
+        prev->SetFollow(elder->Follow());
+        elder->Follow()->SetPrecede(prev);
        
         //将旧版本节点移到废弃区
         elder->SetFollow(obsolete_);
